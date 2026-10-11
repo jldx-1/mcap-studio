@@ -1,0 +1,39 @@
+# Python caches, environments, and packaging output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# React / Rust application
+node_modules/
+frontend/dist/
+backend/target/
+target/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+
+# Local MCAP Studio projects and runtime data (including accounts/sessions)
+/projects/
+/data/
+/misc/
+
+# Large recordings and exported archives; regenerate synthetic data as needed
+*.mcap
+*.bag
+*.db3
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Local logs and operating-system files
+*.log
+.DS_Store
+Thumbs.db

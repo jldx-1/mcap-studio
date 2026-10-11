@@ -1,0 +1,3 @@
+export function PermissionPicker({ permissions, selected, onChange, disabled = false, label = "Permissions" }: { permissions: string[]; selected: string[]; onChange: (value: string[]) => void; disabled?: boolean; label?: string }) {
+  return <fieldset className="permission-picker" disabled={disabled}><legend>{label}</legend><div>{permissions.map((permission) => <label className="check-label" key={permission}><input type="checkbox" checked={selected.includes(permission)} onChange={(e) => onChange(e.target.checked ? [...selected, permission] : selected.filter((p) => p !== permission))} />{permission}</label>)}</div></fieldset>;
+}

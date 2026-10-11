@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">MCAP Studio</title>
+  <desc id="description">An original blue sensor-stream emblem beside MCAP Studio, with connected sensor cards and the tagline: Record. Refine. Release.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F5FAFF"/>
+      <stop offset=".55" stop-color="#EAF3FF"/>
+      <stop offset="1" stop-color="#DCEBFF"/>
+    </linearGradient>
+    <linearGradient id="ribbon" x1="75" y1="120" x2="330" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#008CFF"/>
+      <stop offset=".45" stop-color="#0866FF"/>
+      <stop offset="1" stop-color="#1746B8"/>
+    </linearGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#0866FF" opacity=".12"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-40%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#1746B8" flood-opacity=".1"/>
+    </filter>
+    <clipPath id="bounds"><rect width="1280" height="360" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#bounds)">
+    <rect width="1280" height="360" fill="url(#background)"/>
+    <rect x="810" width="470" height="360" fill="url(#dots)"/>
+    <circle cx="1210" cy="85" r="238" stroke="#0866FF" stroke-opacity=".07" stroke-width="48"/>
+    <circle cx="1210" cy="85" r="174" stroke="#0866FF" stroke-opacity=".08"/>
+    <path d="M0 314C230 249 310 355 560 318S971 239 1280 300" stroke="white" stroke-opacity=".65" stroke-width="2"/>
+
+    <!-- Original emblem: three sensor streams converge into a recording. -->
+    <g filter="url(#shadow)">
+      <rect x="91" y="84" width="216" height="192" rx="40" fill="white" fill-opacity=".85" stroke="#CDDFF7"/>
+      <g stroke="url(#ribbon)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M124 130H160L191 165H218"/>
+        <path d="M124 180H218"/>
+        <path d="M124 230H160L191 195H218"/>
+      </g>
+      <g fill="#0866FF">
+        <circle cx="124" cy="130" r="9"/>
+        <circle cx="124" cy="180" r="9"/>
+        <circle cx="124" cy="230" r="9"/>
+      </g>
+      <rect x="211" y="140" width="64" height="80" rx="14" fill="url(#ribbon)"/>
+      <path d="M228 162H258M228 175H249M228 188H258M228 201H242" stroke="white" stroke-width="4" stroke-linecap="round"/>
+    </g>
+
+    <g font-family="Inter, Segoe UI, Arial, sans-serif">
+      <text x="378" y="101" font-size="12" font-weight="700" letter-spacing="3.2" fill="#0866FF">SENSOR DATA FOR AI TRAINING</text>
+      <text x="374" y="174" font-size="64" font-weight="700" letter-spacing="-2.8" fill="#14263D">MCAP <tspan font-weight="400" fill="#0866FF">Studio</tspan></text>
+      <text x="378" y="217" font-size="22" fill="#526781">Record. Refine. Release.</text>
+      <g font-size="11" font-weight="600" letter-spacing="1.2">
+        <rect x="378" y="247" width="98" height="29" rx="14.5" fill="white" fill-opacity=".8" stroke="#CDDFF7"/>
+        <text x="427" y="266" text-anchor="middle" fill="#426286">PROCESS</text>
+        <rect x="488" y="247" width="106" height="29" rx="14.5" fill="white" fill-opacity=".8" stroke="#CDDFF7"/>
+        <text x="541" y="266" text-anchor="middle" fill="#426286">ANNOTATE</text>
+        <rect x="606" y="247" width="96" height="29" rx="14.5" fill="white" fill-opacity=".8" stroke="#CDDFF7"/>
+        <text x="654" y="266" text-anchor="middle" fill="#426286">EXPORT</text>
+      </g>
+    </g>
+
+    <!-- Abstract camera, signal, and labeled-data cards. -->
+    <g stroke="#0866FF" stroke-opacity=".3" stroke-width="2">
+      <path d="M1008 109H1058Q1078 109 1078 129V173H1130"/>
+      <path d="M1008 256H1058Q1078 256 1078 236V187H1130"/>
+      <path d="M1078 180H1014"/>
+    </g>
+    <g filter="url(#shadow)">
+      <rect x="900" y="67" width="108" height="84" rx="16" fill="white" fill-opacity=".92"/>
+      <rect x="922" y="85" width="64" height="47" rx="8" fill="#EAF3FF"/>
+      <path d="M930 122L945 106L958 119L967 109L978 122" stroke="#0866FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="970" cy="97" r="4" fill="#40AAFF"/>
+      <rect x="882" y="160" width="132" height="42" rx="12" fill="white" fill-opacity=".92"/>
+      <path d="M898 181H912L918 170L929 191L940 175L947 181H958L965 171L974 188L981 181H998" stroke="#0866FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="900" y="218" width="108" height="76" rx="16" fill="white" fill-opacity=".92"/>
+      <g fill="#86B9FF">
+        <rect x="921" y="255" width="10" height="19" rx="3"/>
+        <rect x="939" y="243" width="10" height="31" rx="3"/>
+        <rect x="957" y="233" width="10" height="41" rx="3" fill="#0866FF"/>
+        <rect x="975" y="248" width="10" height="26" rx="3"/>
+      </g>
+      <rect x="1130" y="142" width="80" height="76" rx="20" fill="#0866FF"/>
+      <rect x="1149" y="158" width="41" height="44" rx="7" stroke="white" stroke-opacity=".8" stroke-width="2"/>
+      <path d="M1159 180L1167 188L1181 173" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <circle cx="1078" cy="180" r="5" fill="#0866FF"/>
+    <rect x=".5" y=".5" width="1279" height="359" rx="23.5" stroke="#0866FF" stroke-opacity=".1"/>
+  </g>
+</svg>

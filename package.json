@@ -1,0 +1,17 @@
+{
+  "name": "mcap-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local MCAP pipeline and labeling workspace with React and Rust",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "setup": "node scripts/tasks.mjs setup",
+    "dev": "node scripts/dev.mjs",
+    "check": "node scripts/tasks.mjs check",
+    "build": "node scripts/tasks.mjs build",
+    "start": "node scripts/tasks.mjs start",
+    "smoke": "node scripts/api-smoke.mjs"
+  }
+}

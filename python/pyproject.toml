@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcap-project"
+version = "0.1.0"
+description = "Lazy filesystem access to MCAP Studio projects and generated training datasets"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+torch = ["torch>=2", "Pillow>=9"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcap_project*"]
