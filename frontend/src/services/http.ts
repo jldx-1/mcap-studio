@@ -18,10 +18,14 @@ export async function api<T>(
   if (!response.ok) {
     if (response.status === 401 && !path.startsWith("/auth/")) window.dispatchEvent(new Event("mcap-session-expired"));
     const value = await response.text();
-    let message = value;
+    const tooLarge = "File is too large. It exceeds the server's upload size limit. Choose a smaller file.";
+    let message = response.status === 413 ? tooLarge : value;
     try {
       const error = JSON.parse(value);
-      message = error.error || error.message || value;
+      const detail = error.error || error.message;
+      if (typeof detail === "string" && detail.trim()) {
+        message = response.status === 413 && !/too large/i.test(detail) ? `${tooLarge} ${detail}` : detail;
+      }
     } catch {
       /* plain server error */
     }

@@ -14,9 +14,26 @@ pub(super) struct Decoder {
 
 impl Decoder {
     pub(super) fn decode(&mut self, message: &mcap::Message<'_>) -> Result<Value> {
+        self.decode_inner(message, false).map(|(record, _)| record)
+    }
+
+    /// Keep camera bytes binary while building previews. The public record and
+    /// translation paths continue to expose the usual base64 JSON representation.
+    pub(super) fn decode_for_index(
+        &mut self,
+        message: &mcap::Message<'_>,
+    ) -> Result<(Value, Option<Vec<u8>>)> {
+        self.decode_inner(message, true)
+    }
+
+    fn decode_inner(
+        &mut self,
+        message: &mcap::Message<'_>,
+        separate_image: bool,
+    ) -> Result<(Value, Option<Vec<u8>>)> {
         let channel = &message.channel;
         match channel.message_encoding.as_str() {
-            "json" | "application/json" => Ok(serde_json::from_slice(&message.data)?),
+            "json" | "application/json" => Ok((serde_json::from_slice(&message.data)?, None)),
             "protobuf" => {
                 let schema = channel.schema.as_ref().context("Protobuf channel has no schema")?;
                 ensure!(schema.encoding == "protobuf", "Unsupported Protobuf schema encoding {}", schema.encoding);
@@ -27,7 +44,20 @@ impl Decoder {
                     entry.insert(descriptor);
                 }
                 let message = DynamicMessage::decode(self.descriptors[&schema.id].clone(), message.data.as_ref())?;
-                message_json(&message, 0)
+                if separate_image && ["width", "format", "encoding", "pixel_format"].iter().any(|name| message.descriptor().get_field_by_name(name).is_some()) {
+                    if let Some(field) = message.descriptor().get_field_by_name("data") {
+                        if field.containing_oneof().is_none() || message.has_field(&field) {
+                            if let prost_reflect::Value::Bytes(bytes) = message.get_field(&field).as_ref() {
+                                let mut record = message_json_skipping(&message, 0, Some("data"))?;
+                                record["data"] = Value::Null;
+                                if super::is_camera(&record) {
+                                    return Ok((record, Some(bytes.to_vec())));
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok((message_json(&message, 0)?, None))
             }
             encoding => bail!("Unsupported message encoding {encoding}; native decoding supports JSON and Protobuf"),
         }
@@ -35,9 +65,20 @@ impl Decoder {
 }
 
 pub(super) fn message_json(message: &DynamicMessage, depth: usize) -> Result<Value> {
+    message_json_skipping(message, depth, None)
+}
+
+fn message_json_skipping(
+    message: &DynamicMessage,
+    depth: usize,
+    skip: Option<&str>,
+) -> Result<Value> {
     ensure!(depth < 64, "Protobuf nesting exceeds 64 levels");
     let mut record = Map::new();
     for field in message.descriptor().fields() {
+        if skip == Some(field.name()) {
+            continue;
+        }
         if field.containing_oneof().is_some() && !message.has_field(&field) {
             continue;
         }

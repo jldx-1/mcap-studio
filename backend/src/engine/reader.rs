@@ -1,5 +1,6 @@
 //! Streaming MCAP records and schema/channel identity checks.
 use anyhow::{ensure, Context, Result};
+use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -9,11 +10,23 @@ use std::{
     sync::Arc,
 };
 
+type Channels = BTreeMap<u16, Arc<mcap::Channel<'static>>>;
+
 /// Stream chunks instead of allocating a buffer the size of the recording.
 pub(super) fn stream_messages(
     path: &Path,
+    visit: impl FnMut(&mcap::Message<'_>) -> Result<()>,
+) -> Result<Channels> {
+    stream_messages_with_hash(path, false, visit).map(|(channels, _)| channels)
+}
+
+/// Optionally digest the source during its existing sequential indexing read.
+pub(super) fn stream_messages_with_hash(
+    path: &Path,
+    hash: bool,
     mut visit: impl FnMut(&mcap::Message<'_>) -> Result<()>,
-) -> Result<BTreeMap<u16, Arc<mcap::Channel<'static>>>> {
+) -> Result<(Channels, Option<String>)> {
+    let mut digest = hash.then(Sha256::new);
     use mcap::{
         records::Record,
         sans_io::{LinearReadEvent, LinearReader, LinearReaderOptions},
@@ -27,7 +40,11 @@ pub(super) fn stream_messages(
     while let Some(event) = reader.next_event() {
         match event? {
             LinearReadEvent::ReadRequest(need) => {
-                let count = file.read(reader.insert(need))?;
+                let buffer = reader.insert(need);
+                let count = file.read(buffer)?;
+                if let Some(digest) = &mut digest {
+                    digest.update(&buffer[..count]);
+                }
                 reader.notify_read(count);
             }
             LinearReadEvent::Record { opcode, data } => match mcap::parse_record(opcode, data)? {
@@ -88,5 +105,19 @@ pub(super) fn stream_messages(
             },
         }
     }
-    Ok(channels)
+    // Include any bytes following the MCAP end magic in the file identity too.
+    if let Some(digest) = &mut digest {
+        let mut buffer = vec![0; 256 * 1024];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+    }
+    Ok((
+        channels,
+        digest.map(|digest| format!("{:x}", digest.finalize())),
+    ))
 }

@@ -10,14 +10,18 @@ mod reader;
 mod synchronization;
 mod training_images;
 mod translation;
+mod translation_files;
+mod translation_stream;
 pub use training_images::{ensure_native_training_images, write_training_tensor};
+pub use translation_files::{translation_channels, translation_file_script, translation_sample};
 
 use decoder::Decoder;
 use images::{decode_image, is_camera};
-pub use index::build_index;
+pub use index::{build_index, build_index_and_hash};
 pub use processing::process_recording;
 use reader::stream_messages;
 pub use translation::translate_record;
+pub(crate) use translation::CompiledTranslation;
 pub fn interpolate_records(
     left: &Value,
     right: &Value,

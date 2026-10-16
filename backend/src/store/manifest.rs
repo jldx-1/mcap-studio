@@ -90,6 +90,62 @@ pub(super) fn load_manifest(folder: &Path) -> Result<Value> {
                         );
                     }
                 } else {
+                    if item["kind"] == "imported-yolo" {
+                        ensure!(
+                            item["format"] == "yolo",
+                            "Imported dataset must use YOLO format"
+                        );
+                        let classes = item["class_names"]
+                            .as_array()
+                            .context("Imported dataset needs class names")?;
+                        ensure!(
+                            classes.len() <= 10_000
+                                && classes.iter().all(|name| name
+                                    .as_str()
+                                    .is_some_and(|text| !text.trim().is_empty())),
+                            "Invalid imported class names"
+                        );
+                        let pages = item["sample_pages"]
+                            .as_object()
+                            .context("Imported dataset needs sample pages")?;
+                        let mut count = 0u64;
+                        for (group, page) in pages {
+                            let number = group
+                                .parse::<u64>()
+                                .context("Invalid imported sample page")?;
+                            ensure!(
+                                group == &format!("{number:012}"),
+                                "Invalid imported page identity"
+                            );
+                            let hash = field(page, "sha256")?;
+                            ensure!(
+                                hash.len() == 64
+                                    && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                                "Invalid sample page hash"
+                            );
+                            let relative = format!("datasets/{id}/samples/{group}-{hash}.json");
+                            ensure!(
+                                page["path"] == relative,
+                                "Imported sample page path does not match dataset"
+                            );
+                            contained_path(folder, &relative)?;
+                            let rows = page["count"]
+                                .as_u64()
+                                .context("Imported page needs a count")?;
+                            ensure!(
+                                rows <= crate::storage::PAGE_SIZE,
+                                "Imported sample page exceeds its size limit"
+                            );
+                            count = count
+                                .checked_add(rows)
+                                .context("Imported sample count overflow")?;
+                        }
+                        ensure!(
+                            item["entry_count"] == count,
+                            "Imported sample count does not match pages"
+                        );
+                        continue;
+                    }
                     if item["format"] == "csv" {
                         ensure!(
                             contained_path(folder, field(item, "csv_path")?)?

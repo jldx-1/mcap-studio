@@ -72,6 +72,10 @@ pub(super) enum Token {
     Op(String),
     Left,
     Right,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Dot,
 }
 
 pub(super) fn tokens(expression: &str) -> Result<Vec<Token>> {
@@ -92,20 +96,28 @@ pub(super) fn tokens(expression: &str) -> Result<Vec<Token>> {
         match ch {
             b'(' => { result.push(Token::Left); index += 1; },
             b')' => { result.push(Token::Right); index += 1; },
+            b'[' => { result.push(Token::LeftBracket); index += 1; },
+            b']' => { result.push(Token::RightBracket); index += 1; },
+            b',' => { result.push(Token::Comma); index += 1; },
+            b'.' if !bytes.get(index+1).is_some_and(u8::is_ascii_digit) => { result.push(Token::Dot); index += 1; },
             b'+' | b'-' | b'*' | b'/' | b'%' => {
                 index += 1;
                 if ch == b'/' && bytes.get(index) == Some(&b'/') { index += 1; }
                 result.push(Token::Op(expression[start..index].into()));
             },
-            b'"' => {
+            b'"' | b'\'' => {
                 index += 1;
                 while index < bytes.len() {
                     if bytes[index] == b'\\' { index += 2; continue; }
-                    if bytes[index] == b'"' { index += 1; break; }
+                    if bytes[index] == ch { index += 1; break; }
                     index += 1;
                 }
                 ensure!(index <= bytes.len(), "Invalid string literal");
-                result.push(Token::Value(serde_json::from_str(&expression[start..index])?));
+                ensure!(bytes.get(index-1) == Some(&ch), "Unterminated string literal");
+                let literal = if ch == b'\'' {
+                    format!("\"{}\"",expression[start+1..index-1].replace("\\'","'").replace('"',"\\\""))
+                } else { expression[start..index].to_owned() };
+                result.push(Token::Value(serde_json::from_str(&literal)?));
             },
             c if c.is_ascii_digit() || c == b'.' => {
                 index += 1;
@@ -123,12 +135,12 @@ pub(super) fn tokens(expression: &str) -> Result<Vec<Token>> {
                 index += 1;
                 while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_' || bytes[index] == b'.') { index += 1; }
                 let path = &expression[start..index];
-                match path { "true" => result.push(Token::Value(json!(true))), "false" => result.push(Token::Value(json!(false))), "null" => result.push(Token::Value(Value::Null)), _ => {
+                match path { "true" | "True" => result.push(Token::Value(json!(true))), "false" | "False" => result.push(Token::Value(json!(false))), "null" | "None" => result.push(Token::Value(Value::Null)), _ => {
                     ensure!(valid_path(path), "Invalid source field {path}");
                     result.push(Token::Field(path.into()));
                 }}
             },
-            _ => bail!("Unsupported expression syntax; use field paths, numbers, JSON strings, parentheses and + - * / // %"),
+            _ => bail!("Unsupported expression syntax; use field paths, indexing, constants, arithmetic, and abs/round/min/max/sqrt"),
         }
         ensure!(result.len() <= 200, "Translation expression is too complex");
     }
@@ -177,7 +189,101 @@ pub(super) fn arithmetic(left: Value, op: &str, right: Value) -> Result<Value> {
     })
 }
 
-pub(super) fn evaluate(expression: &str, source: &Value) -> Result<Value> {
+fn evaluate(tokens: &[Token], source: &Value) -> Result<Value> {
+    fn function(name: &str, args: Vec<Value>) -> Result<Value> {
+        match name {
+            "abs" if args.len() == 1 => {
+                if let Some(value) = integer(&args[0]) {
+                    return integer_value(value.checked_abs().context("Absolute value overflow")?);
+                }
+                finite_number(args[0].as_f64().context("abs requires a number")?.abs())
+            }
+            "sqrt" if args.len() == 1 => {
+                finite_number(args[0].as_f64().context("sqrt requires a number")?.sqrt())
+            }
+            "round" if matches!(args.len(), 1 | 2) => {
+                if args.len() == 1 && (args[0].is_i64() || args[0].is_u64()) {
+                    return Ok(args[0].clone());
+                }
+                let digits = if args.len() == 2 {
+                    args[1]
+                        .as_i64()
+                        .context("round precision must be an integer")?
+                } else {
+                    0
+                };
+                ensure!(
+                    (-308..=308).contains(&digits),
+                    "round precision is excessive"
+                );
+                if let Some(value) = integer(&args[0]) {
+                    if digits >= 0 {
+                        return Ok(args[0].clone());
+                    }
+                    if digits <= -20 {
+                        return Ok(json!(0));
+                    }
+                    let factor = 10i128.pow((-digits) as u32);
+                    let magnitude = value.abs();
+                    let (mut quotient, remainder) = (magnitude / factor, magnitude % factor);
+                    if remainder * 2 > factor || (remainder * 2 == factor && quotient % 2 != 0) {
+                        quotient += 1;
+                    }
+                    return integer_value(quotient * factor * value.signum());
+                }
+                let value = args[0].as_f64().context("round requires a number")?;
+                let rounded = if digits >= 0 {
+                    // Decimal formatting rounds the recorded binary value itself,
+                    // matching legacy Python round (e.g. 2.675 rounds to 2.67).
+                    format!("{value:.precision$}", precision = digits as usize).parse::<f64>()?
+                } else {
+                    let step = 10f64.powi((-digits) as i32);
+                    (value / step).round_ties_even() * step
+                };
+                if args.len() == 1 {
+                    ensure!(
+                        rounded >= i64::MIN as f64 && rounded < u64::MAX as f64,
+                        "Rounded value exceeds the integer range"
+                    );
+                    integer_value(rounded as i128)
+                } else {
+                    finite_number(rounded)
+                }
+            }
+            "min" | "max" => {
+                let args = if args.len() == 1 {
+                    args[0]
+                        .as_array()
+                        .context("min/max require multiple values or an array")?
+                        .clone()
+                } else {
+                    args
+                };
+                let mut chosen = args
+                    .first()
+                    .context("min/max need at least one value")?
+                    .clone();
+                ensure!(chosen.is_number(), "min/max require numeric values");
+                for value in &args[1..] {
+                    let ordering =
+                        if let (Some(left), Some(right)) = (integer(value), integer(&chosen)) {
+                            left.cmp(&right)
+                        } else {
+                            value
+                                .as_f64()
+                                .context("min/max require numeric values")?
+                                .partial_cmp(&chosen.as_f64().unwrap())
+                                .context("Nonfinite comparison")?
+                        };
+                    if (name == "min" && ordering.is_lt()) || (name == "max" && ordering.is_gt()) {
+                        chosen = value.clone();
+                    }
+                }
+                Ok(chosen)
+            }
+            _ => bail!("Unsupported function or arguments for {name}; use abs/round/min/max/sqrt"),
+        }
+    }
     fn parse(tokens: &[Token], index: &mut usize, minimum: u8, source: &Value) -> Result<Value> {
         let token = tokens
             .get(*index)
@@ -185,6 +291,29 @@ pub(super) fn evaluate(expression: &str, source: &Value) -> Result<Value> {
         *index += 1;
         let mut left = match token {
             Token::Value(value) => value.clone(),
+            Token::Field(path) if matches!(tokens.get(*index), Some(Token::Left)) => {
+                ensure!(
+                    matches!(path.as_str(), "abs" | "round" | "min" | "max" | "sqrt"),
+                    "Unsupported translation function {path}"
+                );
+                *index += 1;
+                let mut args = Vec::new();
+                if !matches!(tokens.get(*index), Some(Token::Right)) {
+                    loop {
+                        args.push(parse(tokens, index, 0, source)?);
+                        if !matches!(tokens.get(*index), Some(Token::Comma)) {
+                            break;
+                        }
+                        *index += 1;
+                    }
+                }
+                ensure!(
+                    matches!(tokens.get(*index), Some(Token::Right)),
+                    "Missing closing function parenthesis"
+                );
+                *index += 1;
+                function(path, args)?
+            }
             Token::Field(path) => get_path(source, path)?.clone(),
             Token::Left => {
                 let value = parse(tokens, index, 0, source)?;
@@ -206,6 +335,51 @@ pub(super) fn evaluate(expression: &str, source: &Value) -> Result<Value> {
             }
             _ => bail!("Expected a field, value or parenthesized expression"),
         };
+        loop {
+            if matches!(tokens.get(*index), Some(Token::LeftBracket)) {
+                *index += 1;
+                let key = parse(tokens, index, 0, source)?;
+                ensure!(
+                    matches!(tokens.get(*index), Some(Token::RightBracket)),
+                    "Missing closing index bracket"
+                );
+                *index += 1;
+                left = if let Some(array) = left.as_array() {
+                    let offset = integer(&key).context("Array index must be an integer")?;
+                    let offset = if offset < 0 {
+                        array.len() as i128 + offset
+                    } else {
+                        offset
+                    };
+                    ensure!(
+                        offset >= 0 && offset < array.len() as i128,
+                        "Array index is out of range"
+                    );
+                    array[offset as usize].clone()
+                } else if let Some(object) = left.as_object() {
+                    let key = key
+                        .as_str()
+                        .map(str::to_owned)
+                        .or_else(|| integer(&key).map(|v| v.to_string()))
+                        .context("Map index must be a string or integer")?;
+                    object
+                        .get(&key)
+                        .with_context(|| format!("Map key {key} is missing"))?
+                        .clone()
+                } else {
+                    bail!("Indexing requires an array or map");
+                };
+            } else if matches!(tokens.get(*index), Some(Token::Dot)) {
+                *index += 1;
+                let Some(Token::Field(path)) = tokens.get(*index) else {
+                    bail!("Expected field after index");
+                };
+                left = get_path(&left, path)?.clone();
+                *index += 1;
+            } else {
+                break;
+            }
+        }
         while let Some(Token::Op(op)) = tokens.get(*index) {
             let precedence = if op == "+" || op == "-" { 10 } else { 20 };
             if precedence < minimum {
@@ -217,9 +391,8 @@ pub(super) fn evaluate(expression: &str, source: &Value) -> Result<Value> {
         }
         Ok(left)
     }
-    let tokens = tokens(expression)?;
     let mut index = 0;
-    let value = parse(&tokens, &mut index, 0, source)?;
+    let value = parse(tokens, &mut index, 0, source)?;
     ensure!(index == tokens.len(), "Unexpected syntax after expression");
     Ok(value)
 }
@@ -227,80 +400,119 @@ pub(super) fn evaluate(expression: &str, source: &Value) -> Result<Value> {
 /// Apply safe field mappings. Wildcards copy unmapped fields; explicit renames
 /// remove their original source paths, matching the legacy translation scripts.
 pub fn translate_record(source: &Value, script: &str) -> Result<Value> {
-    if script.trim().is_empty() {
-        return Ok(source.clone());
-    }
-    let mut copies = Vec::new();
-    let mut mappings: Vec<(Option<String>, String, String)> = Vec::new();
-    for (line_no, raw) in script.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+    CompiledTranslation::parse(script)?.apply(source)
+}
+
+pub(crate) struct CompiledTranslation {
+    identity: bool,
+    copies: Vec<String>,
+    mappings: Vec<(Option<String>, String, Vec<Token>)>,
+}
+
+impl CompiledTranslation {
+    pub(crate) fn parse(script: &str) -> Result<Self> {
+        if script.trim().is_empty() {
+            return Ok(Self {
+                identity: true,
+                copies: Vec::new(),
+                mappings: Vec::new(),
+            });
         }
-        if let Some((destination, expression)) = line.split_once("<-") {
-            ensure!(
-                valid_path(destination.trim()),
-                "Line {}: invalid destination",
-                line_no + 1
-            );
-            tokens(expression.trim()).with_context(|| format!("Line {}", line_no + 1))?;
-            mappings.push((None, destination.trim().into(), expression.trim().into()));
-        } else if let Some((field, destination)) = line.split_once("->") {
-            let field = field.trim().strip_prefix("source.").unwrap_or(field.trim());
-            let destination = destination.trim();
-            ensure!(
-                field == "*" || valid_path(field),
-                "Line {}: invalid source field",
-                line_no + 1
-            );
-            if destination == "*" {
-                copies.push(field.to_owned());
+        let mut copies = Vec::new();
+        let mut mappings: Vec<(Option<String>, String, Vec<Token>)> = Vec::new();
+        for (line_no, raw) in script.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            ensure!(
-                field != "*",
-                "Line {}: use * -> * for a whole record",
-                line_no + 1
-            );
-            let path_end = destination
-                .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '.')
-                .unwrap_or(destination.len());
-            let target = &destination[..path_end];
-            ensure!(
-                valid_path(target),
-                "Line {}: invalid destination",
-                line_no + 1
-            );
-            let expression = format!("source.{field}{}", &destination[path_end..]);
-            tokens(&expression).with_context(|| format!("Line {}", line_no + 1))?;
-            mappings.push((Some(field.into()), target.into(), expression));
+            if let Some((destination, expression)) = line.split_once("<-") {
+                ensure!(
+                    valid_path(destination.trim()),
+                    "Line {}: invalid destination",
+                    line_no + 1
+                );
+                let expression =
+                    tokens(expression.trim()).with_context(|| format!("Line {}", line_no + 1))?;
+                mappings.push((None, destination.trim().into(), expression));
+            } else if let Some((field, destination)) = line.split_once("->") {
+                let field = field.trim().strip_prefix("source.").unwrap_or(field.trim());
+                let destination = destination.trim();
+                ensure!(
+                    field == "*" || valid_path(field),
+                    "Line {}: invalid source field",
+                    line_no + 1
+                );
+                if destination == "*" {
+                    copies.push(field.to_owned());
+                    continue;
+                }
+                ensure!(
+                    field != "*",
+                    "Line {}: use * -> * for a whole record",
+                    line_no + 1
+                );
+                let path_end = destination
+                    .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '.')
+                    .unwrap_or(destination.len());
+                let target = &destination[..path_end];
+                ensure!(
+                    valid_path(target),
+                    "Line {}: invalid destination",
+                    line_no + 1
+                );
+                let expression = format!("source.{field}{}", &destination[path_end..]);
+                let expression =
+                    tokens(&expression).with_context(|| format!("Line {}", line_no + 1))?;
+                mappings.push((Some(field.into()), target.into(), expression));
+            } else {
+                bail!("Line {}: use source.field -> destination or destination <- source.field arithmetic", line_no + 1);
+            }
+        }
+        ensure!(
+            !copies.is_empty() || !mappings.is_empty(),
+            "Translation contains no mappings"
+        );
+        Ok(Self {
+            identity: false,
+            copies,
+            mappings,
+        })
+    }
+
+    /// Processing owns each decoded record, so identity translations can pass it
+    /// through without cloning large arrays or camera payloads.
+    pub(crate) fn apply_owned(&self, source: Value) -> Result<Value> {
+        if self.identity {
+            Ok(source)
         } else {
-            bail!("Line {}: use source.field -> destination or destination <- source.field arithmetic", line_no + 1);
+            self.apply(&source)
         }
     }
-    ensure!(
-        !copies.is_empty() || !mappings.is_empty(),
-        "Translation contains no mappings"
-    );
-    let mut output = json!({});
-    for copy in copies {
-        if copy == "*" {
-            output = source.clone();
-            ensure!(
-                output.is_object(),
-                "Wildcard copying requires an object record"
-            );
-        } else {
-            set_path(&mut output, &copy, get_path(source, &copy)?.clone())?;
+
+    pub(super) fn apply(&self, source: &Value) -> Result<Value> {
+        if self.identity {
+            return Ok(source.clone());
         }
-    }
-    for (field, _, _) in &mappings {
-        if let Some(field) = field {
-            remove_path(&mut output, field);
+        let mut output = json!({});
+        for copy in &self.copies {
+            if copy == "*" {
+                output = source.clone();
+                ensure!(
+                    output.is_object(),
+                    "Wildcard copying requires an object record"
+                );
+            } else {
+                set_path(&mut output, copy, get_path(source, copy)?.clone())?;
+            }
         }
+        for (field, _, _) in &self.mappings {
+            if let Some(field) = field {
+                remove_path(&mut output, field);
+            }
+        }
+        for (_, destination, expression) in &self.mappings {
+            set_path(&mut output, destination, evaluate(expression, source)?)?;
+        }
+        Ok(output)
     }
-    for (_, destination, expression) in mappings {
-        set_path(&mut output, &destination, evaluate(&expression, source)?)?;
-    }
-    Ok(output)
 }

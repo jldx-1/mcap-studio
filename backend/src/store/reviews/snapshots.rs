@@ -43,6 +43,9 @@ pub(super) fn annotation_digest(
     digest(&data)
 }
 pub(in crate::store) fn included(row: &Value) -> bool {
+    if row["skipped"] == true {
+        return false;
+    }
     row["reviewed"] == true
         || row["boxes"].as_array().is_some_and(|a| !a.is_empty())
         || row["labels"].as_array().is_some_and(|a| !a.is_empty())

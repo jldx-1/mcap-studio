@@ -718,7 +718,7 @@ pub(super) fn reviewed_rows<'a>(
         .into_iter()
         .flatten()
     {
-        if row["reviewed"] == true {
+        if row["reviewed"] == true && row["skipped"] != true {
             ensure!(
                 recording.annotations["techniques"][channel] != "undefined"
                     && !recording.annotations["techniques"][channel].is_null(),

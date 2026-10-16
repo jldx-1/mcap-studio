@@ -126,6 +126,9 @@ impl Store {
             .as_u64()
             .unwrap_or(0)
             + 1;
+        if let Some(expected) = request["base_version"].as_u64() {
+            ensure!(dataset_id.is_some() && expected + 1 == number, "A newer dataset version was published. Reopen the dataset before adding recordings.");
+        }
         let modalities: BTreeSet<String> = serde_json::from_value(request["modalities"].clone())?;
         ensure!(
             !modalities.is_empty()
@@ -148,7 +151,33 @@ impl Store {
             serde_json::from_value(request["label_ids"].clone())?
         };
         let labels = version_labels(&sources, &label_ids)?;
-        let selection = json!({"modalities":modalities,"label_ids":label_ids,"include_negatives":request["include_negatives"].as_bool().unwrap_or(true),"primary_modality":request["primary_modality"],"synchronization":request["synchronization"],"sensor_window_ns":request["sensor_window_ns"]});
+        let splits = request
+            .get("splits")
+            .cloned()
+            .unwrap_or(json!({"train":80,"val":10,"test":10,"seed":"0"}));
+        let weights: Vec<f64> = ["train", "val", "test"]
+            .iter()
+            .map(|key| splits[key].as_f64().unwrap_or(-1.0))
+            .collect();
+        ensure!(
+            weights.iter().all(|w| w.is_finite() && *w >= 0.0)
+                && (weights.iter().sum::<f64>() - 100.0).abs() < 0.001,
+            "Dataset split percentages must total 100"
+        );
+        let mut split_groups = serde_json::Map::new();
+        for source in &sources {
+            let manifest = self.cached_manifest(&source.folder)?;
+            let item = &manifest["mcaps"][&source.task.recording_id];
+            let group = item["session_id"]
+                .as_str()
+                .or(item["source_root_uuid"].as_str())
+                .unwrap_or(&source.task.recording_id);
+            split_groups.insert(
+                format!("{}/{}", source.project_id, source.task.recording_id),
+                json!(format!("{}/{group}", source.project_id)),
+            );
+        }
+        let selection = json!({"modalities":modalities,"label_ids":label_ids,"include_negatives":request["include_negatives"].as_bool().unwrap_or(true),"primary_modality":request["primary_modality"],"synchronization":request["synchronization"],"sensor_window_ns":request["sensor_window_ns"],"splits":splits,"split_groups":split_groups});
         let base = format!("datasets/{id}/versions/{number:012}");
         ensure!(
             !contained_path(&folder, &format!("{base}/version.json"))?.is_file(),

@@ -35,6 +35,13 @@ struct Recording {
     annotations: Value,
 }
 
+struct RecordingFile {
+    project: Arc<Value>,
+    item: Value,
+    folder: PathBuf,
+    path: PathBuf,
+}
+
 struct RecordingSource {
     project: Arc<Value>,
     item: Value,
@@ -57,6 +64,10 @@ mod projects;
 mod recordings;
 mod reviews;
 mod structured;
+mod translations;
+mod workflow;
+mod yolo;
+pub(crate) use yolo::upload_name;
 
 pub(crate) use crate::storage::read_json;
 pub use crate::storage::{contained_path, file_hash, write_json};

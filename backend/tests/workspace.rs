@@ -1211,7 +1211,7 @@ fn structured_datasets_transform_rows_preserve_precision_and_quote_csv() {
 #[test]
 fn protobuf_topics_flatten_nested_fields_into_csv_rows() {
     let workspace = tempfile::tempdir().unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../utils/synthetic_robot_arm.mcap");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../misc/synthetic_robot_arm.mcap");
     let bytes = fs::read(source).unwrap();
     let messages = mcap::MessageStream::new(&bytes)
         .unwrap()

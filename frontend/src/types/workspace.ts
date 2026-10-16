@@ -10,6 +10,7 @@ export type Page =
   | "structured"
   | "labeling"
   | "pipeline"
+  | "prepare"
   | "datasets"
   | "administration"
   | "account"

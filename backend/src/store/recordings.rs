@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use super::{
     canonical_uuid, contained_path, field, file_hash, load_manifest, now, read_json,
-    refresh_classes, registry, stringify_timestamps, write_json, Recording, RecordingSource, Store,
+    refresh_classes, registry, stringify_timestamps, write_json, Recording, RecordingFile,
+    RecordingSource, Store,
 };
 
 impl Store {
@@ -128,6 +129,18 @@ impl Store {
         ensure!(magic == mcap::MAGIC, "Invalid MCAP end magic");
         // Windows/DrvFS cannot rename a directory while one of its files is open.
         drop(file);
+        if let Some(existing) = registry(&manifest, "mcaps")?
+            .values()
+            .find(|item| item["sha256"] == sha256)
+        {
+            let mut result = if defer_index {
+                existing.clone()
+            } else {
+                recording_detail(&self.recording_inner(id, field(existing, "uuid")?)?)
+            };
+            result["duplicate"] = json!(true);
+            return Ok(result);
+        }
         if !defer_index {
             crate::engine::build_index(&recording, temporary.path(), &sha256)?;
         }
@@ -203,6 +216,8 @@ impl Store {
         } else {
             None
         };
+        let has_saved_annotations =
+            sharded.is_some() || (manifest["format_version"] != 3 && annotations_path.is_file());
         let mut annotations = if let Some(state) = sharded {
             state
         } else if manifest["format_version"] != 3 && annotations_path.is_file() {
@@ -240,6 +255,36 @@ impl Store {
             }
         }
         refresh_classes(&manifest, &mut annotations)?;
+        if !has_saved_annotations && item["preparation_settings"].is_object() {
+            for (source_channel, settings) in item["preparation_settings"]
+                .as_object()
+                .into_iter()
+                .flatten()
+            {
+                if let Some(channel) =
+                    item["pipeline_result"]["channel_id_map"][source_channel].as_u64()
+                {
+                    let channel = channel.to_string();
+                    if let Some(technique) = settings["technique"].as_str() {
+                        annotations["techniques"][&channel] = json!(technique);
+                    }
+                    if let Some(list_id) =
+                        settings["label_list_id"].as_str().filter(|s| !s.is_empty())
+                    {
+                        if let Some(list) = manifest["label_lists"].get(list_id) {
+                            if !annotations["topic_label_lists"].is_object() {
+                                annotations["topic_label_lists"] = json!({});
+                            }
+                            if !annotations["topic_labels"].is_object() {
+                                annotations["topic_labels"] = json!({});
+                            }
+                            annotations["topic_label_lists"][&channel] = json!(list_id);
+                            annotations["topic_labels"][&channel] = list["label_ids"].clone();
+                        }
+                    }
+                }
+            }
+        }
         Ok(Recording {
             project: manifest,
             item,
@@ -250,13 +295,13 @@ impl Store {
         })
     }
 
-    pub(super) fn recording_source(
+    pub(super) fn recording_file(
         &self,
         id: &str,
         recording_id: &str,
         fresh: bool,
         preview: bool,
-    ) -> Result<RecordingSource> {
+    ) -> Result<RecordingFile> {
         canonical_uuid(recording_id)?;
         let folder = self.folder(id)?;
         let mut manifest = if preview {
@@ -327,6 +372,27 @@ impl Store {
                 .insert(path.clone(), (stamp.clone(), hash.clone()));
             let _ = write_json(&verification, &json!({"fingerprint":stamp,"sha256":hash}));
         }
+        Ok(RecordingFile {
+            project: manifest,
+            item,
+            folder,
+            path,
+        })
+    }
+
+    pub(super) fn recording_source(
+        &self,
+        id: &str,
+        recording_id: &str,
+        fresh: bool,
+        preview: bool,
+    ) -> Result<RecordingSource> {
+        let RecordingFile {
+            project: manifest,
+            item,
+            folder,
+            path,
+        } = self.recording_file(id, recording_id, fresh, preview)?;
         let original_cache = if manifest["format_version"] == 1 {
             folder.clone()
         } else {
@@ -439,41 +505,115 @@ impl Store {
     }
 
     pub fn pipeline(&self, id: &str, request: &Value) -> Result<Value> {
-        let _guard = self
-            .gate
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Store unavailable"))?;
+        self.pipeline_with_progress(id, request, |_| Ok(()))
+    }
+
+    pub(super) fn pipeline_with_progress(
+        &self,
+        id: &str,
+        request: &Value,
+        progress: impl Fn(&str) -> Result<()>,
+    ) -> Result<Value> {
         let recording_id = field(request, "recording_uuid")?;
         let folder = self.folder(id)?;
-        let _lock = Self::lock_project(&folder)?;
-        let source = self.recording_for_edit(id, recording_id)?;
+        let source = self.recording_file(id, recording_id, true, false)?;
         Self::editable(&source.project)?;
-        validate_workflow(&source.index, request)?;
+        if let Some(hash) = request.get("source_sha256") {
+            ensure!(
+                *hash == source.item["sha256"],
+                "The source recording changed since preparation was queued"
+            );
+        }
+        if request["preserve_untranslated"] == true {
+            ensure!(
+                request["sync"]["enabled"] != true,
+                "Translation-only processing cannot synchronize topics"
+            );
+            let topics = self.translation_identities(id, recording_id)?;
+            let index = json!({"topics":topics.as_array().context("Missing translation topics")?.iter().map(|topic| (topic["channel_id"].as_str().unwrap_or_default().to_owned(),topic.clone())).collect::<Map<_,_>>()});
+            validate_workflow(&index, request)?;
+            // Repeated application of the same scripts reuses the immutable processed recording.
+            for item in registry(&source.project, "mcaps")?.values() {
+                if item["source_recording_uuid"] == recording_id {
+                    if let Some(provenance) = item["pipeline_provenance"].as_str() {
+                        if read_json(&contained_path(&folder, provenance)?)
+                            .is_ok_and(|saved| saved == *request)
+                        {
+                            return self.recording(id, field(item, "uuid")?);
+                        }
+                    }
+                }
+            }
+        } else {
+            validate_workflow(&self.recording_for_edit(id, recording_id)?.index, request)?;
+        }
         let uuid = Uuid::new_v4().to_string();
         let parent = contained_path(&folder, "mcap")?;
         let temporary = tempfile::Builder::new()
             .prefix(".recording-")
             .tempdir_in(&parent)?;
-        let source_path = contained_path(&folder, field(&source.item, "path")?)?;
+        let source_path = source.path.clone();
         let output = temporary.path().join("recording.mcap");
+        progress("Filtering and translating selected topics")?;
         let result = crate::engine::process_recording(&source_path, &output, request)?;
-        let hash = file_hash(&output)?;
-        let index = crate::engine::build_index(&output, temporary.path(), &hash)?;
+        progress("Building previews and recording index")?;
+        let index = crate::engine::build_index_and_hash(&output, temporary.path())?;
+        let hash = field(&index, "sha256")?.to_owned();
         let applied_workflow = json!({"selected_channels":index["topics"].as_object().context("Processed recording needs topics")?.keys().collect::<Vec<_>>(),"translations":{},"sync":{"enabled":false,"parent_channel":"","mode":"nearest","tolerance_ns":null,"delete_out_of_sync":false}});
         write_json(
             &temporary.path().join("web-workflow.json"),
             &applied_workflow,
         )?;
         write_json(&temporary.path().join("pipeline.json"), request)?;
-        let item = json!({"uuid":uuid,"path":format!("mcap/{uuid}/recording.mcap"),"source_file":format!("processed-{}",source.item["source_file"].as_str().unwrap_or("recording.mcap")),"sha256":hash,"created_at":now(),"label_ids":source.item["label_ids"],"source_recording_uuid":recording_id,"pipeline_result":result,"pipeline_provenance":format!("mcap/{uuid}/pipeline.json"),"web_workflow":format!("mcap/{uuid}/web-workflow.json")});
-        let destination = contained_path(&folder, &format!("mcap/{uuid}"))?;
-        fs::rename(temporary.path(), &destination)?;
+        let mut item = json!({"uuid":uuid,"path":format!("mcap/{uuid}/recording.mcap"),"source_file":format!("processed-{}",source.item["source_file"].as_str().unwrap_or("recording.mcap")),"sha256":hash,"created_at":now(),"label_ids":source.item["label_ids"],"source_recording_uuid":recording_id,"source_root_uuid":source.item.get("source_root_uuid").unwrap_or(&json!(recording_id)),"session_id":source.item.get("session_id").unwrap_or(&json!(recording_id)),"pipeline_result":result,"pipeline_provenance":format!("mcap/{uuid}/pipeline.json"),"web_workflow":format!("mcap/{uuid}/web-workflow.json"),"preparation_settings":request["topic_settings"]});
+        let _guard = self
+            .gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Store unavailable"))?;
+        let _lock = Self::lock_project(&folder)?;
         let mut manifest = load_manifest(&folder)?;
+        Self::editable(&manifest)?;
+        ensure!(
+            manifest["mcaps"][recording_id]["sha256"] == source.item["sha256"],
+            "The source recording was removed or changed during preparation"
+        );
+        if let Some(session) = manifest["mcaps"][recording_id]["session_id"].as_str() {
+            item["session_id"] = json!(session);
+        }
+        if request["preserve_untranslated"] == true {
+            for existing in registry(&manifest, "mcaps")?.values() {
+                if existing["source_recording_uuid"] == recording_id {
+                    if let Some(path) = existing["pipeline_provenance"].as_str() {
+                        if read_json(&contained_path(&folder, path)?)
+                            .is_ok_and(|saved| saved == *request)
+                        {
+                            return self
+                                .recording_inner(id, field(existing, "uuid")?)
+                                .map(|r| recording_detail(&r));
+                        }
+                    }
+                }
+            }
+        }
+        let destination = contained_path(&folder, &format!("mcap/{uuid}"))?;
+        progress("Publishing prepared recording")?;
+        fs::rename(temporary.path(), &destination)?;
         manifest["mcaps"][&uuid] = item;
         if let Err(error) = crate::storage::save_manifest(&folder, &manifest) {
             let _ = fs::remove_dir_all(&destination);
             return Err(error);
         }
+        // The digest was calculated before publication; avoid hashing the new output again.
+        let output_path = destination.join("recording.mcap");
+        let stamp = crate::storage::fingerprint(&output_path)?;
+        self.hashes
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Hash registry unavailable"))?
+            .insert(output_path, (stamp.clone(), hash.clone()));
+        let _ = write_json(
+            &contained_path(&folder, &format!("indexes/{uuid}/source.json"))?,
+            &json!({"fingerprint":stamp,"sha256":hash}),
+        );
         Ok(recording_detail(&self.recording_inner(id, &uuid)?))
     }
 
@@ -490,6 +630,7 @@ impl Store {
         let item = manifest["mcaps"]
             .get(recording_id)
             .context("Recording not found")?;
+        self.ensure_recording_unused(id, recording_id)?;
         let dependencies: Vec<_> = registry(&manifest, "datasets")?
             .values()
             .filter(|dataset| {

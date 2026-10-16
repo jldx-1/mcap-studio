@@ -121,7 +121,7 @@ try {
   process.once("SIGTERM", () => stop(143));
   launch(
     "cargo",
-    ["run", "--manifest-path", "backend/Cargo.toml", "--locked"],
+    ["run", "--manifest-path", "backend/Cargo.toml", "--locked", "--release"],
     "Rust backend",
     env,
   );

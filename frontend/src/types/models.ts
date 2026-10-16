@@ -10,6 +10,8 @@ export interface ProjectSummary {
 }
 
 export interface RecordingMetrics {
+  start_time_ns?: string;
+  end_time_ns?: string;
   topic_count: number;
   topic_names: string[];
   duration_seconds: number;
@@ -20,6 +22,9 @@ export interface RecordingMetrics {
 }
 
 export interface RecordingSummary {
+  source_recording_uuid?: string;
+  source_root_uuid?: string;
+  session_id?: string;
   created_at?: string;
   summary?: RecordingMetrics;
   uuid: string;
@@ -48,6 +53,11 @@ export interface DatasetSource {
 }
 
 export interface Dataset {
+  all_source_recordings?: string[];
+  class_names?: string[];
+  split_counts?: Record<string, number>;
+  box_count?: number;
+  negative_count?: number;
   kind?: string;
   latest_version?: number;
   versions?: import("./datasetVersions").VersionSummary[];

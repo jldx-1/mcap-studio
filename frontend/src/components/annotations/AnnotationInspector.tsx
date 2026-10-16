@@ -352,6 +352,8 @@ editor: Pick<AnnotationEditorController,
       </div>
     )}
     <div className="review-panel">
+      <p className="field-help">{frameRow.skipped ? "Skipped — excluded from training" : frameRow.explicit_empty ? "Confirmed empty — training negative" : frameRow.boxes.length || frameRow.labels?.length ? "Labeled frame" : "Unlabeled frame"}. Completion is separate from reviewer approval.</p>
+      <label className="check-label"><input type="checkbox" checked={frameRow.skipped === true} onChange={e => updateRow(row => { row.skipped = e.target.checked; if (e.target.checked) { row.reviewed = false; delete row.explicit_empty; } })} />Skip this frame</label>
       <label
         className={`review-check ${frameRow.reviewed ? "is-reviewed" : ""}`}
       >
@@ -361,6 +363,7 @@ editor: Pick<AnnotationEditorController,
           onChange={(event) =>
             updateRow((row) => {
               row.reviewed = event.target.checked;
+              if (event.target.checked) row.skipped = false;
               if (
                 event.target.checked &&
                 !row.boxes.length &&

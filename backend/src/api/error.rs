@@ -16,7 +16,9 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let message = format!("{:#}", self.0);
         let lower = message.to_lowercase();
-        let status = if lower.contains("unauthenticated") {
+        let status = if lower.contains("mcap upload exceeds the configured limit") {
+            StatusCode::PAYLOAD_TOO_LARGE
+        } else if lower.contains("unauthenticated") {
             StatusCode::UNAUTHORIZED
         } else if lower.contains("forbidden") {
             StatusCode::FORBIDDEN

@@ -16,7 +16,10 @@ export type DatasetWorkspaceProps = {
   project: Project;
   mode: "new" | "load" | "view" | "add";
   onModeChange: (mode: "new" | "load" | "view" | "add") => void;
-  onOpenRecording: (id: string) => Promise<void>;
+  onOpenRecording: (id: string, project?: string) => Promise<void>;
+  onContinueLabeling?: (id: string, project?: string) => Promise<void>;
+  initialRecordings?: string[];
+  onInitialRecordingsUsed?: () => void;
   busy: boolean;
   perform: Perform;
   onProject: (project: Project) => Promise<void>;

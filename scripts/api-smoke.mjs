@@ -58,7 +58,8 @@ const p = `/projects/${project.uuid}`;
 await request(`${p}/members`,{ members:[{user_id:reviewer.id}] },"PUT");
 const upload = new FormData();
 upload.append("file", new Blob([await readFile(source)]), basename(source));
-let recording = await request(`${p}/recordings`, upload);
+// This suite exercises image labeling; preset translations have dedicated tests.
+let recording = await request(`${p}/recordings?auto_translate=false`, upload);
 assert.ok(recording.topics.length > 0, "Imported MCAP must have topics.");
 assert.match(recording.sha256, /^[a-f0-9]{64}$/);
 const r = `${p}/recordings/${recording.uuid}`;

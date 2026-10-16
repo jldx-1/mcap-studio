@@ -14,7 +14,7 @@ dev:
 
 # Run the Rust API alone.
 backend:
-    cargo run --manifest-path backend/Cargo.toml --locked
+    cargo run --manifest-path backend/Cargo.toml --locked --release
 
 # Run the React development server alone.
 frontend:

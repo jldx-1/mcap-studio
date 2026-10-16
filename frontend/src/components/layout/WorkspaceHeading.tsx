@@ -44,12 +44,12 @@ workspace: Pick<WorkspaceController,
     : page === "project"
       ? project.name
       : page === "mcaps"
-        ? "Project MCAPs"
+        ? "Recordings"
         : page === "labels"
           ? "Project labels"
           : page === "datasets"
             ? "Project datasets"
-            : page === "pipeline"
+            : page === "prepare" ? "Prepare recordings" : page === "pipeline"
               ? "Prepare channels"
               : (page === "labeling" || page === "structured")
                 ? selectedTopic?.topic || "Label topic"
@@ -99,7 +99,7 @@ workspace: Pick<WorkspaceController,
             disabled={!!busy || connected !== true}
             onClick={() => openDialog("open")}
           >
-            <FolderOpen size={17} /> Browse computer
+            <FolderOpen size={17} /> Browse server
           </button>
           <button
             className="button secondary"

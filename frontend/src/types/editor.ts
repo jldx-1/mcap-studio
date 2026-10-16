@@ -6,6 +6,7 @@ export type AnnotationEditorProps = {
   recording: Recording;
   channel: string;
   onBack: () => void;
+  onNext?: () => Promise<void>;
   onLabels: () => void;
   onError: (value: string) => void;
   onNotice: (value: string) => void;

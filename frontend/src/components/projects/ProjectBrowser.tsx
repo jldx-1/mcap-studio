@@ -60,8 +60,9 @@ export function ProjectBrowser({
   return (
     <Dialog title="Browse for a project" onClose={onClose}>
       <p className="modal-description">
-        Browse folders on the computer running MCAP Studio. Select a project
-        folder containing project.json.
+        Browse folders on the MCAP Studio server, not on this device. Select a
+        server project folder containing project.json. To import MCAPs from this
+        device, use Load MCAPs or drag and drop the files.
       </p>
       <div className="button-row browser-shortcuts">
         {listing?.shortcuts.map((item, index) => (
@@ -87,7 +88,7 @@ export function ProjectBrowser({
           aria-label="Folder path"
           value={path}
           onChange={(event) => setPath(event.target.value)}
-          placeholder="Enter a folder path"
+          placeholder="Enter a server folder path"
         />
         <button
           className="button secondary small"

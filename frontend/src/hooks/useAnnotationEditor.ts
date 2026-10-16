@@ -112,7 +112,7 @@ export function useAnnotationEditor({
     .map((name, id) => ({ name, id }))
     .filter(
       (item) =>
-        !allowedIds || allowedIds.includes(state.class_uuids?.[item.id] || ""),
+        !assignedList || allowedIds.includes(state.class_uuids?.[item.id] || ""),
     )
     .sort((a, b) => allowedIds ? allowedIds.indexOf(state.class_uuids?.[a.id] || "") - allowedIds.indexOf(state.class_uuids?.[b.id] || "") : a.id - b.id);
 
@@ -215,7 +215,7 @@ export function useAnnotationEditor({
     setDirty(JSON.stringify(previous) !== savedRef.current);
     setSelected(null);
   }, [history, readOnly]);
-  const save = useCallback(async () => {
+  const save = useCallback(async (silent = false) => {
     if(readOnly) return !dirtyRef.current;
     if (savingRef.current) return false;
     savingRef.current = true;
@@ -223,7 +223,8 @@ export function useAnnotationEditor({
     setSaveError("");
     onError("");
     try {
-      const value = clone(stateRef.current);
+      const started = clone(stateRef.current);
+      const value = clone(started);
       if (technique === "jsonl") {
         let parsed: unknown;
         try {
@@ -248,14 +249,17 @@ export function useAnnotationEditor({
       )
         value.techniques[channel] = technique;
       const saved = await patch<AnnotationState | SavedAnnotationPatch>(`${base}/annotations`, annotationPatch(JSON.parse(savedRef.current) as AnnotationState, value));
-      const result = applySavedAnnotations(value, saved);
+      const persisted = applySavedAnnotations(value, saved);
+      const pending = annotationPatch(started, stateRef.current);
+      const result = applySavedAnnotations(clone(persisted), { sha256: persisted.sha256, metadata: pending.metadata, changes: pending.changes });
       setState(result);
       stateRef.current = result;
-      savedRef.current = JSON.stringify(result);
-      setDirty(false);
-      dirtyRef.current = false;
+      savedRef.current = JSON.stringify(persisted);
+      const stillDirty = JSON.stringify(result) !== savedRef.current;
+      setDirty(stillDirty);
+      dirtyRef.current = stillDirty;
       onSaved(result);
-      onNotice("Annotations saved.");
+      if (!silent) onNotice("Annotations saved.");
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -267,6 +271,11 @@ export function useAnnotationEditor({
       setSaving(false);
     }
   }, [base, channel, frameNumber, technique, onError, onNotice, onSaved, readOnly]);
+  useEffect(() => {
+    if (!dirty || saving || readOnly || saveError || playing || drag.current) return;
+    const timer = window.setTimeout(() => void save(true), 1200);
+    return () => window.clearTimeout(timer);
+  }, [state, fields, dirty, saving, readOnly, saveError, playing, save]);
   useEffect(() => {
     registerNavigationGuard(async () => {
       if (savingRef.current) return false;
@@ -364,6 +373,8 @@ export function useAnnotationEditor({
           const row = ((next.annotations[channel] ||= {})[frameNumber] ||=
             freshRow());
           row.reviewed = !row.reviewed;
+          if (row.reviewed) { row.skipped = false; if (!row.boxes?.length && !row.labels?.length) row.explicit_empty = true; }
+          else delete row.explicit_empty;
         });
       }
     };

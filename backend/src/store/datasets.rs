@@ -44,6 +44,9 @@ impl Store {
         project: &Value,
         dataset: &Value,
     ) -> Value {
+        if dataset["kind"] == "imported-yolo" {
+            return json!({"sources":[],"modalities":["image"],"multimodal":false});
+        }
         if dataset["kind"] == "approved-dataset" {
             return serde_json::json!({"sources":dataset["sources"],"modalities":dataset["modalities"],"multimodal":dataset["multimodal"]});
         }

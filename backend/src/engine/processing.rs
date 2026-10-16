@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::synchronization::{channel_id, resample, timestamp, validate_sync_options, Sample};
-use super::{stream_messages, translate_record, Decoder};
+use super::{stream_messages, translation::CompiledTranslation, Decoder};
 
 #[derive(Clone)]
 pub(super) struct Output {
@@ -47,6 +47,19 @@ pub fn process_recording(source: &Path, destination: &Path, request: &Value) -> 
     if sync_enabled {
         validate_sync_options(&sync)?;
     }
+    if request["preserve_untranslated"] == true {
+        ensure!(
+            !sync_enabled,
+            "Translation-only processing cannot synchronize topics"
+        );
+        return super::translation_stream::process(source, destination, request, selected.as_ref());
+    }
+    if !sync_enabled {
+        // MCAP permits messages in source order. Write each message immediately
+        // rather than retaining and cloning all decoded payloads just to sort them.
+        return super::translation_stream::process(source, destination, request, selected.as_ref());
+    }
+    let mut scripts = BTreeMap::new();
     let mut decoder = Decoder::default();
     let mut channels: BTreeMap<u16, Vec<Sample>> = BTreeMap::new();
     let mut metadata: BTreeMap<u16, (String, String, BTreeMap<String, String>)> = BTreeMap::new();
@@ -61,16 +74,22 @@ pub fn process_recording(source: &Path, destination: &Path, request: &Value) -> 
         let record = decoder
             .decode(message)
             .with_context(|| format!("Channel {id} at {}", message.log_time))?;
-        let translation = &request["translations"][id.to_string()];
-        let script = translation
-            .as_str()
-            .or_else(|| translation["script"].as_str())
-            .unwrap_or("");
-        ensure!(
-            translation.is_null() || translation.is_string() || translation["script"].is_string(),
-            "Translation for channel {id} must be script text"
-        );
-        let record = translate_record(&record, script)
+        if let std::collections::btree_map::Entry::Vacant(entry) = scripts.entry(id) {
+            let translation = &request["translations"][id.to_string()];
+            let script = translation
+                .as_str()
+                .or_else(|| translation["script"].as_str())
+                .unwrap_or("");
+            ensure!(
+                translation.is_null()
+                    || translation.is_string()
+                    || translation["script"].is_string(),
+                "Translation for channel {id} must be script text"
+            );
+            entry.insert(CompiledTranslation::parse(script)?);
+        }
+        let record = scripts[&id]
+            .apply_owned(record)
             .with_context(|| format!("Translation for channel {id}"))?;
         let options = sync["channels"].get(id.to_string()).unwrap_or(&sync);
         let time = if sync_enabled && options["enabled"] != false {

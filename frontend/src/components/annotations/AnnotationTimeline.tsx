@@ -14,6 +14,8 @@ editor: Pick<AnnotationEditorController,
     | "reviewedCount"
     | "commit"
     | "navigateFrame"
+    | "state"
+    | "channel"
   >
 }) {
   const {
@@ -31,6 +33,11 @@ editor: Pick<AnnotationEditorController,
   return (<div className="timeline">
     <div className="timeline-top">
       <div className="playback-controls">
+        <button className="button secondary small" onClick={() => {
+          const next = frames.map((_, index) => index).find(index => index > frameNumber && !editor.state.annotations[editor.channel]?.[index]?.reviewed && !editor.state.annotations[editor.channel]?.[index]?.skipped);
+          const first = frames.map((_, index) => index).find(index => !editor.state.annotations[editor.channel]?.[index]?.reviewed && !editor.state.annotations[editor.channel]?.[index]?.skipped);
+          if (next !== undefined || first !== undefined) navigateFrame(next ?? first!);
+        }}>Next incomplete frame</button>
         <button
           className="icon-button"
           aria-label="First frame"
@@ -50,6 +57,7 @@ editor: Pick<AnnotationEditorController,
         <button
           className="play-button"
           aria-label={playing ? "Pause playback" : "Play frames"}
+          title={playing ? "Pause playback" : "Play at recorded frame timing (1×)"}
           disabled={frames.length < 2}
           onClick={togglePlayback}
         >

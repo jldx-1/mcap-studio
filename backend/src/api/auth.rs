@@ -180,7 +180,7 @@ fn authorize_route(
     if parts.get(1) == Some(&"auth") {
         return Ok(());
     }
-    if parts.get(1) == Some(&"approved-data") {
+    if matches!(parts.get(1), Some(&"approved-data" | &"recording-library")) {
         return Ok(());
     }
     if parts.get(1) == Some(&"accounts") {
@@ -237,14 +237,26 @@ fn authorize_route(
             }
         } // actions checked individually below
         Some("reviews") => "review.view",
-        Some("upgrade" | "pipeline") => "project.manage",
+        Some("upgrade" | "pipeline" | "upload-limits") => "project.manage",
         Some("labels" | "label-lists") => "labels.manage",
         Some("exports") => "datasets.export",
         Some("approved-data") => "project.view",
+        Some("server-recordings") => "project.manage",
+        Some("workflow") => {
+            if read && parts.get(4) == Some(&"drafts") {
+                "project.view"
+            } else if read {
+                "mcap.view"
+            } else if parts.get(4) == Some(&"drafts") {
+                "datasets.generate"
+            } else {
+                "project.manage"
+            }
+        }
         Some("dataset-versions") => "datasets.generate",
         Some("datasets") => {
             if read {
-                if parts.last() == Some(&"csv") {
+                if matches!(parts.last(), Some(&"csv" | &"archive")) {
                     "datasets.export"
                 } else {
                     "project.view"

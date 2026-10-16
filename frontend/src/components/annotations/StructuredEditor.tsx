@@ -54,11 +54,12 @@ export default function StructuredEditor({
   onNotice,
   onError,
   onBack,
+  onNext,
   registerNavigationGuard
 }: {
   project: Project; recording: Recording; channel: string; perform: Perform; busy: boolean;
   onProject: (project: Project) => Promise<void>; onNotice: (notice: string) => void; onError: (error: string) => void;
-  onBack: () => void; registerNavigationGuard: (guard: (() => Promise<boolean>) | null) => void;
+  onNext?: () => Promise<void>; onBack: () => void; registerNavigationGuard: (guard: (() => Promise<boolean>) | null) => void;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,6 +105,7 @@ export default function StructuredEditor({
   });
   return <section className="panel structured-editor">
     <div className="panel-heading"><div><h2>Message columns</h2><p>{topic?.topic} · {preview?.total.toLocaleString() || 0} messages · one row per message</p></div><button className="button secondary small" disabled={busy} onClick={onBack}><ArrowLeft size={16} /> Back to topic table</button></div>
+    {onNext && <div className="collection-body"><button className="button secondary small" disabled={busy || (dirty && (!name.trim() || !validNames || !columns.length))} onClick={()=>void (async()=>{if(!dirty||await saveDataset())await onNext();})()}>Save and next topic / recording</button></div>}
     <div className="collection-body">
       <label>Dataset<select aria-label="Structured dataset to edit" value={datasetId} disabled={busy} onChange={(event) => {
         const id = event.target.value;

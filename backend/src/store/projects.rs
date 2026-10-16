@@ -53,6 +53,7 @@ impl Store {
                                 }
                                 item.as_object_mut().unwrap().remove("entries");
                                 item.as_object_mut().unwrap().remove("entry_pages");
+                                item.as_object_mut().unwrap().remove("sample_pages");
                             }
                             item
                         })
@@ -107,7 +108,7 @@ impl Store {
         } else {
             contained_path(original, "annotations.json").ok()?
         };
-        let dependencies = json!({"index":crate::storage::fingerprint(&index_path).ok()?,"annotations":crate::storage::fingerprint(&annotations_path).ok(),"sha256":item["sha256"]});
+        let dependencies = json!({"summary_version":2,"index":crate::storage::fingerprint(&index_path).ok()?,"annotations":crate::storage::fingerprint(&annotations_path).ok(),"sha256":item["sha256"]});
         let summary_path = contained_path(
             folder,
             &format!("indexes/{}/summary.json", item["uuid"].as_str()?),
@@ -169,6 +170,9 @@ impl Store {
                     .map_or(0, Vec::len);
                 if let Some(rows) = rows.as_object() {
                     for (number, row) in rows {
+                        if row["skipped"] == true {
+                            continue;
+                        }
                         if !number.parse::<usize>().is_ok_and(|number| number < count) {
                             continue;
                         }
@@ -193,7 +197,7 @@ impl Store {
         modalities.sort();
         let mut topic_names: Vec<_> = topic_names.into_iter().collect();
         topic_names.sort();
-        let summary = json!({"topic_count":topics.len(), "topic_names":topic_names, "duration_seconds":end.zip(start).map_or(0.0, |(end, start)| (end - start) as f64 / 1e9), "modalities":modalities, "frame_count":frame_count, "annotated_count":annotated_count, "reviewed_count":reviewed_count});
+        let summary = json!({"topic_count":topics.len(), "topic_names":topic_names,"start_time_ns":start.map(|s|s.to_string()),"end_time_ns":end.map(|s|s.to_string()), "duration_seconds":end.zip(start).map_or(0.0, |(end, start)| (end - start) as f64 / 1e9), "modalities":modalities, "frame_count":frame_count, "annotated_count":annotated_count, "reviewed_count":reviewed_count});
         let _ = crate::storage::write_changed(
             &summary_path,
             &json!({"dependencies":dependencies,"summary":summary}),

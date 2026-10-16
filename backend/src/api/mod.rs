@@ -26,12 +26,16 @@ mod labels;
 mod projects;
 mod recordings;
 mod reviews;
+mod translations;
+mod upload_limit;
 mod worker;
+mod workflow;
 
 use annotations::{annotations, patch_annotations};
 use datasets::{
     build_dataset, create_dataset, dataset, dataset_csv, dataset_entries, dataset_features,
-    dataset_pca, delete_dataset, structured_dataset, structured_preview,
+    dataset_pca, delete_dataset, import_yolo, structured_dataset, structured_preview, yolo_archive,
+    yolo_image, yolo_samples,
 };
 pub use error::ApiError;
 use error::ApiResult;
@@ -44,6 +48,8 @@ use recordings::{
 use worker::blocking;
 
 pub fn router(store: Arc<Store>) -> Router {
+    let upload_limit =
+        upload_limit::UploadLimit::from_env().expect("Invalid MCAP upload limit configuration");
     let frontend = std::env::var_os("MCAP_FRONTEND_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -131,6 +137,23 @@ pub fn router(store: Arc<Store>) -> Router {
         )
         .route("/api/projects", get(projects).post(create_project))
         .route("/api/approved-data", get(dataset_versions::available))
+        .route("/api/recording-library", get(workflow::library))
+        .route(
+            "/api/projects/{project}/workflow/{collection}",
+            get(workflow::list).post(workflow::save),
+        )
+        .route(
+            "/api/projects/{project}/workflow/{collection}/{id}",
+            axum::routing::delete(workflow::delete),
+        )
+        .route(
+            "/api/projects/{project}/server-recordings",
+            get(workflow::server_files).post(workflow::server_import),
+        )
+        .route(
+            "/api/projects/{project}/recordings/session",
+            post(workflow::session),
+        )
         .route(
             "/api/projects/{project}/approved-data",
             get(dataset_versions::approved),
@@ -171,7 +194,16 @@ pub fn router(store: Arc<Store>) -> Router {
         .route("/api/projects/browse", post(browse_projects))
         .route("/api/projects/{project}", get(project))
         .route("/api/projects/{project}/upgrade", post(upgrade_project))
-        .route("/api/projects/{project}/recordings", post(import_recording))
+        .route(
+            "/api/projects/{project}/upload-limits",
+            get(recordings::upload_limits),
+        )
+        .route(
+            "/api/projects/{project}/recordings",
+            // Enforce the configured file-byte limit during streaming, rather
+            // than counting the multipart envelope against the file size.
+            post(import_recording).layer(DefaultBodyLimit::disable()),
+        )
         .route(
             "/api/projects/{project}/recordings/{recording}",
             get(recording).delete(delete_recording),
@@ -192,6 +224,18 @@ pub fn router(store: Arc<Store>) -> Router {
             "/api/projects/{project}/recordings/{recording}/workflow",
             put(workflow),
         )
+        .route(
+            "/api/projects/{project}/recordings/{recording}/translations",
+            get(translations::choices).post(translations::save),
+        )
+        .route(
+            "/api/projects/{project}/recordings/{recording}/translations/preview",
+            post(translations::preview),
+        )
+        .route(
+            "/api/projects/{project}/recordings/{recording}/translations/apply",
+            post(translations::apply),
+        )
         .route("/api/projects/{project}/labels", post(label))
         .route("/api/projects/{project}/labels/{label}", put(update_label))
         .route("/api/projects/{project}/label-lists", post(label_list))
@@ -200,6 +244,22 @@ pub fn router(store: Arc<Store>) -> Router {
             put(update_label_list),
         )
         .route("/api/projects/{project}/datasets", post(create_dataset))
+        .route(
+            "/api/projects/{project}/datasets/import-yolo",
+            post(import_yolo),
+        )
+        .route(
+            "/api/projects/{project}/datasets/{dataset}/samples",
+            get(yolo_samples),
+        )
+        .route(
+            "/api/projects/{project}/datasets/{dataset}/images/{index}",
+            get(yolo_image),
+        )
+        .route(
+            "/api/projects/{project}/datasets/{dataset}/archive",
+            get(yolo_archive),
+        )
         .route(
             "/api/projects/{project}/datasets/{dataset}",
             get(dataset).delete(delete_dataset),
@@ -246,6 +306,7 @@ pub fn router(store: Arc<Store>) -> Router {
             ServeDir::new(&frontend).not_found_service(ServeFile::new(frontend.join("index.html"))),
         )
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
+        .layer(axum::Extension(upload_limit))
         .layer(middleware::from_fn_with_state(store.clone(), auth::protect))
         .layer(
             CorsLayer::new()

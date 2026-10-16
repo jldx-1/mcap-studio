@@ -23,6 +23,22 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| format!("{host}:{port}"))
         .parse()?;
     let store = Arc::new(Store::new(&workspace)?);
+    let jobs = store.clone();
+    tokio::spawn(async move {
+        let mut recover = true;
+        loop {
+            let worker = jobs.clone();
+            let result =
+                tokio::task::spawn_blocking(move || worker.run_next_preparation(recover)).await;
+            match result {
+                Ok(Ok(true)) => continue,
+                Ok(Ok(false)) => recover = false,
+                Ok(Err(error)) => tracing::error!(%error, "Preparation worker failed"),
+                Err(error) => tracing::error!(%error, "Preparation worker stopped unexpectedly"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, workspace = %workspace.display(), "MCAP Workbench backend ready");
     axum::serve(listener, router(store))

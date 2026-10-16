@@ -49,7 +49,7 @@ try {
     .getByRole("heading", { name: "Load a project to begin" })
     .waitFor();
   await page
-    .getByRole("button", { name: "Browse computer", exact: true })
+    .getByRole("button", { name: "Browse server", exact: true })
     .click();
   let dialog = page.getByRole("dialog");
   await dialog

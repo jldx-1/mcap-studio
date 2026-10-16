@@ -33,7 +33,9 @@ backend/src/
     decoder.rs               JSON and embedded Protobuf decoding
     images.rs                camera payload and pixel-format decoding
     index.rs                 decoded frame/record cache construction
-    translation.rs           field paths and arithmetic translations
+    translation.rs           compiled field paths and arithmetic translations
+    translation_files.rs     saved scripts and topic/schema matching
+    translation_stream.rs    streaming translations preserving untouched messages
     synchronization.rs       clocks, interpolation, resampling
     processing.rs            pipeline execution and new MCAP output
   storage/                   filesystem access and portable folder persistence
@@ -121,6 +123,8 @@ All endpoints below start with `/api`. Errors use JSON with an `error` message. 
 | POST       | `/projects/{project}/datasets/{dataset}/entries`                       | Add reviewed frames / records                                              |
 | POST       | `/projects/{project}/exports`                                          | Export reviewed annotations                                                |
 | GET        | `/projects/{project}/exports/{export}/download`                        | Download a self-contained export ZIP                                       |
+
+MCAP uploads apply a single matching native translation preset per topic by default. `auto_translate=false` imports the raw source, while `defer_index=true` delays source preview extraction. When automatic translation succeeds, the upload response describes the processed recording and includes `source_recording` (the original import) and `translated_topics`. `translation_warning` reports ambiguous/unsupported presets or failures; the raw import is retained in every case. Translation-only application streams the source, compiles scripts once per channel, preserves untouched schemas/payloads, and reuses an existing output for unchanged processing settings.
 
 The folder browser accepts an optional `path` and returns the current folder, parent, subfolders marked with `is_project`, and Workspace/Home/Desktop shortcuts. It lists folders on the backend computer. Opening a selected project remains a separate request.
 

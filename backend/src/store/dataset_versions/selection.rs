@@ -1,6 +1,26 @@
 //! Bounded sample publication reads immutable annotation pages and metadata only.
 use super::synchronization::{frame_time, input_references};
 use super::*;
+use sha2::{Digest, Sha256};
+
+fn sample_split(source: &ApprovedSource, selection: &Value) -> &'static str {
+    let key = format!("{}/{}", source.project_id, source.task.recording_id);
+    let group = selection["split_groups"][&key].as_str().unwrap_or(&key);
+    let seed = selection["splits"]["seed"].as_str().unwrap_or("0");
+    let hash = Sha256::digest(format!("{seed}/{group}"));
+    let bucket = u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]) as f64
+        / (u32::MAX as f64 + 1.0)
+        * 100.0;
+    let train = selection["splits"]["train"].as_f64().unwrap_or(80.0);
+    let val = selection["splits"]["val"].as_f64().unwrap_or(10.0);
+    if bucket < train {
+        "train"
+    } else if bucket < train + val {
+        "val"
+    } else {
+        "test"
+    }
+}
 
 pub(super) struct Samples {
     pub pages: Value,
@@ -166,6 +186,7 @@ pub(super) fn select_samples(
                 .find(|(_, i)| i["channel_id"] == channel && i["frame"] == number)
                 .map(|(k, _)| k.clone());
             let mut sample = json!({"key":format!("{count:016}"),"source_project_uuid":source.project_id,"mcap_uuid":source.task.recording_id,"channel_id":channel,"frame":number,"time_ns":frame["time_ns"],"width":frame["width"],"height":frame["height"],"approved_revision":source.reference(),"primary_input":primary_input,"annotation":row,"inputs":inputs});
+            sample["split"] = json!(sample_split(source, selection));
             if let Some(values) = values {
                 sample["values"] = values;
             }

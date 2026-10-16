@@ -9,6 +9,9 @@ import { TopicTable } from "./components/mcaps/TopicTable";
 import { Pipeline } from "./components/processing/PipelinePanel";
 import { WorkspaceDialogs } from "./components/WorkspaceDialogs";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { useFileDrop } from "./hooks/useFileDrop";
+import { RecordingPreparation } from "./components/processing/RecordingPreparation";
+import { PreparationJobs } from "./components/processing/PreparationJobs";
 import { McapsPage } from "./pages/McapsPage";
 import { ProjectOverview } from "./pages/ProjectOverview";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -57,6 +60,8 @@ function Workspace() {
     onSaved,
     openDialog
   } = workspace;
+  const dropEnabled = !busy && connected === true && (!project || can(project, auth.user, "project.manage"));
+  const draggingFiles = useFileDrop(dropEnabled, upload);
   const uploadButton = (
     can(project,auth.user,"project.manage") ?
     <button
@@ -79,6 +84,17 @@ function Workspace() {
       <div className="main-shell">
         <WorkspaceTopbar workspace={workspace} />
         <main>
+          {!!workspace.pendingUploads.length && (
+            <div className="pending-import-banner" role="status">
+              <Upload size={20} />
+              <div>
+                <strong>{workspace.pendingUploads.length} file{workspace.pendingUploads.length === 1 ? "" : "s"} ready to import</strong>
+                <span>{project && can(project, auth.user, "project.manage") ? `Import these files into ${project.name}, or choose another project.` : "Open or create a project you can manage to import these files."}</span>
+              </div>
+              {project && can(project, auth.user, "project.manage") && <button className="button primary small" disabled={!!busy || connected !== true} onClick={() => void upload(workspace.pendingUploads)}>Import files</button>}
+              <button className="button secondary small" disabled={!!busy} onClick={workspace.clearPendingUploads}>Cancel import</button>
+            </div>
+          )}
           {error && (
             <div className="alert error" role="alert">
               <div>
@@ -113,10 +129,14 @@ function Workspace() {
           {busy && (
             <div className="progress-banner" role="status">
               <LoaderCircle size={17} className="spin" />
-              {busy}…
+              {workspace.importProgress || busy}…
             </div>
           )}
           <WorkspaceHeading workspace={workspace} uploadButton={uploadButton} />
+          {project && <PreparationJobs project={project} busy={!!busy} perform={perform} onJobs={workspace.resolveLabelingJobs} onProject={updateProject} onLabel={id => void workspace.startLabeling(id, [...new Set([...workspace.labelingQueue, id])])} canManage={can(project, auth.user, "project.manage")} />}
+          {project && workspace.preparationRecordings.length > 0 && page !== "prepare" && <div className="pending-import-banner"><span>{workspace.preparationRecordings.length} recordings ready to prepare</span><button className="button secondary small" disabled={!!busy} onClick={() => void go("prepare")}>Prepare recordings</button></div>}
+          {project && workspace.labelingQueue.length > 0 && !["labeling", "structured", "prepare"].includes(page) && <div className="pending-import-banner"><span>{workspace.labelingQueue.length} recordings in your labeling queue</span><button className="button primary small" disabled={!!busy} onClick={() => void workspace.startLabeling(workspace.labelingQueue[0])}>Continue labeling queue</button><button className="text-button" disabled={!!busy} onClick={() => workspace.saveLabelingQueue([])}>Clear queue</button></div>}
+          {project && page === "prepare" && <RecordingPreparation project={project} recordings={workspace.preparationRecordings} translations={workspace.translationFiles} busy={!!busy} perform={perform} onNotice={setNotice} onQueued={workspace.preparationQueued} onCancel={() => void go("mcaps")} />}
           {!project && page === "projects" && <ProjectsPage workspace={workspace} />}
           {page === "account" && <AccountPage busy={!!busy} perform={perform} />}
           {page === "permissions" && <PermissionsPage project={project} />}
@@ -133,6 +153,9 @@ function Workspace() {
           {project && page === "mcaps" && <McapsPage workspace={workspace} uploadButton={uploadButton} />}
           {project && recording && page === "topics" && (
             <TopicTable
+              key={recording.uuid}
+              onApply={workspace.applyTranslations}
+              onNotice={setNotice}
               project={project}
               recording={recording}
               busy={!!busy}
@@ -145,7 +168,7 @@ function Workspace() {
             />
           )}
           {project && recording && page === "structured" && (
-            <StructuredEditor key={`${project.uuid}/${recording.uuid}/${channel}`} project={project} recording={recording} channel={channel} perform={perform} busy={!!busy} onProject={updateProject} onNotice={setNotice} onError={setError} onBack={() => void go("topics")} registerNavigationGuard={registerNavigationGuard} />
+            <StructuredEditor key={`${project.uuid}/${recording.uuid}/${channel}`} project={project} recording={recording} channel={channel} perform={perform} busy={!!busy} onProject={updateProject} onNotice={setNotice} onError={setError} onBack={() => void go("topics")} onNext={workspace.nextLabeling} registerNavigationGuard={registerNavigationGuard} />
           )}
           {project && recording && page === "labeling" && (
             <Editor
@@ -159,6 +182,7 @@ function Workspace() {
               onSaved={onSaved}
               registerNavigationGuard={registerNavigationGuard}
               onBack={() => void go("topics")}
+              onNext={() => workspace.nextLabeling()}
               onLabels={() => openDialog("labels")}
             />
           )}
@@ -179,10 +203,13 @@ function Workspace() {
               mode={datasetStart}
               onModeChange={setDatasetStart}
               onOpenRecording={chooseRecording}
+              onContinueLabeling={(id, source) => workspace.startLabeling(id, [id], source)}
               busy={!!busy}
               perform={perform}
               onProject={updateProject}
               onNotice={setNotice}
+              initialRecordings={workspace.datasetRecordingIds}
+              onInitialRecordingsUsed={workspace.clearDatasetRecordingIds}
             />
           )}
         </main>
@@ -192,7 +219,7 @@ function Workspace() {
         ref={uploadRef}
         className="visually-hidden"
         aria-label="Load MCAP files"
-        accept=".mcap"
+        accept=".mcap,.json,.txt"
         multiple
         onChange={(event) => void upload(Array.from(event.target.files || []))}
       />
@@ -210,11 +237,15 @@ function Workspace() {
         </div>
       )}
       <WorkspaceDialogs workspace={workspace} />
-
-
-
-
-
+      {draggingFiles && (
+        <div className={`file-drop-overlay ${dropEnabled ? "" : "unavailable"}`} role="status">
+          <div className="file-drop-card">
+            <Upload size={40} />
+            <strong>{dropEnabled ? "Drop MCAPs and translation files" : "MCAP import is unavailable"}</strong>
+            <span>{busy ? "Wait for the current task to finish." : connected !== true ? "Connect to the backend first." : !project ? "Then open or create a project for these files." : !dropEnabled ? "You need permission to manage this project." : `Add recordings to ${project.name}.`}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

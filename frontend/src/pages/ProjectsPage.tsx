@@ -9,7 +9,7 @@ export function ProjectsPage({ workspace }: { workspace: Pick<WorkspaceControlle
     <div className="panel-heading">
       <div>
         <h2>Available projects</h2>
-        <p>Load a project to see its included MCAPs.</p>
+        <p>Open a project, or drop MCAP files here and choose where to import them.</p>
       </div>
       <span className="pill">{projects.length} projects</span>
     </div>
@@ -68,7 +68,7 @@ export function ProjectsPage({ workspace }: { workspace: Pick<WorkspaceControlle
           icon={<FolderOpen size={28} />}
           title="No matching projects"
         >
-          Try another name or browse your computer.
+          Try another name or browse the server.
         </Empty>
       )}
   </section>);

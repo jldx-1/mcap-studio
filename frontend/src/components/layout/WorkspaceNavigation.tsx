@@ -32,13 +32,13 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
         <nav aria-label="Project navigation">
           {[
             { value: "project", label: "Overview", icon: FolderOpen },
-            { value: "mcaps", label: "MCAPs", icon: Layers3,permission:"mcap.view" },
+            { value: "mcaps", label: "Recordings", icon: Layers3,permission:"mcap.view" },
             { value: "labels", label: "Labels", icon: Tag,permission:"labels.manage" },
             { value:"reviews",label:"Reviews",icon:ClipboardCheck,permission:"review.view" },
-            { value:"members",label:"Members",icon:Users,permission:"project.manage" },
             { value: "datasets", label: "Datasets", icon: Database },
+            { value:"members",label:"Members",icon:Users,permission:"project.manage" },
           ].filter((item) => !item.permission || can(project,user,item.permission) || (item.value==="reviews"&&can(project,user,"annotation.view"))).map((item) => (
-            <button key={item.value} className={`nav-item ${page === item.value || (item.value === "reviews" && page === "review") || (item.value === "mcaps" && ["topics", "labeling", "structured", "pipeline"].includes(page)) ? "active" : ""}`}
+            <button key={item.value} className={`nav-item ${page === item.value || (item.value === "reviews" && page === "review") || (item.value === "mcaps" && ["topics", "labeling", "structured", "pipeline", "prepare"].includes(page)) ? "active" : ""}`}
               disabled={!!busy} onClick={() => { if (item.value === "datasets") setDatasetStart("load"); void go(item.value as Page); }}>
               <item.icon size={19} /><span>{item.label}</span>
             </button>

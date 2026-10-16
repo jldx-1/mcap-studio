@@ -60,6 +60,7 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
             <ArrowLeft size={16} /> Back To Table
           </button>
           <strong>{topic?.topic}</strong>
+          {props.onNext && <button className="button secondary small" disabled={saving} onClick={() => void (async () => { if (editor.readOnly || await save()) await props.onNext?.(); })()}>Save and next topic / recording</button>}
           {can(props.project,user,"labels.manage") && <button
             className="button secondary small"
             disabled={saving}
@@ -71,7 +72,7 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
         {!editor.readOnly && <div className="editor-save">
           <span className={`save-state ${dirty ? "unsaved" : ""}`}>
             {dirty ? <span /> : <Check size={14} />}
-            {dirty ? "Unsaved changes" : "All changes saved"}
+            {saveError ? "Save failed — retry to continue" : saving ? "Saving…" : dirty ? "Autosave pending" : "All changes saved"}
           </span>
           <button
             className="button primary small"

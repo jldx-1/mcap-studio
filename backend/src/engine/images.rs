@@ -36,9 +36,13 @@ pub(super) fn is_camera(record: &Value) -> bool {
 
 pub(super) fn decode_image(record: &Value) -> Result<DynamicImage> {
     let bytes = payload_bytes(&record["data"])?;
+    decode_image_bytes(record, &bytes)
+}
+
+pub(super) fn decode_image_bytes(record: &Value, bytes: &[u8]) -> Result<DynamicImage> {
     if bytes.starts_with(b"\x89PNG") || bytes.starts_with(b"\xff\xd8") {
-        return image::load_from_memory(&bytes)
-            .map(|image| DynamicImage::ImageRgb8(image.to_rgb8()))
+        return image::load_from_memory(bytes)
+            .map(|image| DynamicImage::ImageRgb8(image.into_rgb8()))
             .context("Invalid PNG/JPEG image");
     }
     let format = record["format"].as_str().unwrap_or("").to_ascii_lowercase();
@@ -58,8 +62,10 @@ pub(super) fn decode_image(record: &Value) -> Result<DynamicImage> {
         "mono8" | "mono_8" | "8uc1" => (1, 1, false, false),
         "mono16" | "mono_16" | "16uc1" => (1, 2, false, false),
         "32fc1" | "mono32f" => (1, 4, false, true),
+        "32fc3" | "bgr32f" => (3, 4, true, true),
+        "rgb32f" => (3, 4, false, true),
         "64fc1" | "mono64f" => (1, 8, false, true),
-        _ => bail!("Unsupported raw image encoding {encoding}; use RGB/BGR/RGBA/BGRA 8/16-bit, mono8/16, or mono32f/64f"),
+        _ => bail!("Unsupported raw image encoding {encoding}; use RGB/BGR/RGBA/BGRA 8/16-bit, mono8/16, 32FC1/32FC3, rgb32f/bgr32f, or mono64f"),
     };
     let width = record["width"]
         .as_u64()
@@ -87,6 +93,36 @@ pub(super) fn decode_image(record: &Value) -> Result<DynamicImage> {
                 .is_some_and(|size| size <= bytes.len()),
         "Image payload/stride does not match dimensions"
     );
+    // Most camera streams are 8-bit. Copy complete RGB rows and convert the
+    // other layouts with integer byte operations, excluding stride padding.
+    if sample_bytes == 1 {
+        let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+        for row in bytes.chunks_exact(stride).take(height as usize) {
+            let row = &row[..row_bytes];
+            match (channels, reverse) {
+                (3, false) => rgb.extend_from_slice(row),
+                (3 | 4, true) => {
+                    for pixel in row.chunks_exact(channels) {
+                        rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+                    }
+                }
+                (4, false) => {
+                    for pixel in row.chunks_exact(4) {
+                        rgb.extend_from_slice(&pixel[..3]);
+                    }
+                }
+                (1, _) => {
+                    for &value in row {
+                        rgb.extend_from_slice(&[value; 3]);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        return Ok(DynamicImage::ImageRgb8(
+            RgbImage::from_raw(width as u32, height as u32, rgb).context("Invalid RGB image")?,
+        ));
+    }
     let big_endian = record["is_bigendian"]
         .as_bool()
         .unwrap_or_else(|| record["is_bigendian"].as_u64() == Some(1));
@@ -123,15 +159,19 @@ pub(super) fn decode_image(record: &Value) -> Result<DynamicImage> {
     };
     let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
     if float {
+        // Use one range across all color channels to preserve their relative
+        // intensities. Row padding and non-finite samples do not affect it.
         for y in 0..height as usize {
-            for x in 0..width as usize {
-                let value = read_sample(y * stride + x * sample_bytes);
+            for sample in 0..width as usize * channels {
+                let value = read_sample(y * stride + sample * sample_bytes);
                 if value.is_finite() {
                     low = low.min(value);
                     high = high.max(value);
                 }
             }
         }
+        // Normalized frames retain a fixed scale, even if a frame contains
+        // neither black nor white; other float frames use finite min/max.
         if low >= 0.0 && high <= 1.0 {
             low = 0.0;
             high = 1.0;

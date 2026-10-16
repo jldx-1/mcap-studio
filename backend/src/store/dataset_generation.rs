@@ -3,7 +3,7 @@ use anyhow::{ensure, Context, Result};
 use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fs::{self, File},
+    fs,
     io::Write,
     path::Path,
 };
@@ -277,8 +277,8 @@ impl Store {
                     || old[key]["image_stamp"] != json!(image_stamp)
                 {
                     fs::create_dir_all(image.parent().unwrap())?;
-                    let mut temporary = tempfile::NamedTempFile::new_in(image.parent().unwrap())?;
-                    std::io::copy(&mut File::open(&source)?, &mut temporary)?;
+                    let temporary = tempfile::NamedTempFile::new_in(image.parent().unwrap())?;
+                    fs::copy(&source, temporary.path())?;
                     temporary.as_file().sync_all()?;
                     temporary.persist(&image).map_err(|error| error.error)?;
                     copied += 1;
@@ -295,17 +295,19 @@ impl Store {
                     )?;
                     sample["label"] = json!(label_relative);
                 }
-                csv_rows.push(
-                    [
-                        csv_cell(&sample["image"]),
-                        csv_cell(&sample["annotation"]),
-                        csv_cell(&sample["mcap_uuid"]),
-                        csv_cell(&sample["channel_id"]),
-                        number.to_string(),
-                        csv_cell(&sample["time_ns"]),
-                    ]
-                    .join(","),
-                );
+                if format == "csv" {
+                    csv_rows.push(
+                        [
+                            csv_cell(&sample["image"]),
+                            csv_cell(&sample["annotation"]),
+                            csv_cell(&sample["mcap_uuid"]),
+                            csv_cell(&sample["channel_id"]),
+                            number.to_string(),
+                            csv_cell(&sample["time_ns"]),
+                        ]
+                        .join(","),
+                    );
+                }
             }
             sample["dependency"] = json!(digest(&dependency)?);
             if old.get(key) != Some(&sample) {

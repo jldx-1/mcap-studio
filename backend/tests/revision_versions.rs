@@ -253,3 +253,106 @@ fn dataset_versions_keep_their_approved_inputs_when_new_revisions_are_approved()
         .delete_user(&lab.admin, &lab.admin.id)
         .is_err());
 }
+
+#[test]
+fn dataset_session_splits_keep_originals_and_variants_together_and_reject_stale_bases() {
+    let lab = lab();
+    let prepared = lab.store.pipeline(&lab.project, &json!({"recording_uuid":lab.recording,"selected_channels":["1","2"],"translations":{},"techniques":{"1":"classification"},"preserve_untranslated":true,"sync":{"enabled":false}})).unwrap();
+    let output = prepared["uuid"].as_str().unwrap();
+    let mut state =
+        lab.store.recording(&lab.project, &lab.recording).unwrap()["annotations"].clone();
+    state["sha256"] = prepared["sha256"].clone();
+    lab.store
+        .save_annotations_as(&lab.project, output, &state, &lab.alice)
+        .unwrap();
+    let original = task(&lab);
+    let derived = lab.store.create_review_task(&lab.project,&lab.alice,&json!({"title":"Prepared camera","recording_id":output,"scopes":[{"channel_id":"1","start_frame":0,"end_frame":2}]})).unwrap();
+    for created in [&original, &derived] {
+        let submitted = action(&lab, created, &lab.alice, "submit", json!({})).unwrap();
+        let claimed = action(&lab, &submitted, &lab.bob, "claim", json!({})).unwrap();
+        action(&lab, &claimed, &lab.bob, "approve", json!({})).unwrap();
+    }
+    let sources =
+        json!([{"task_id":original["id"],"revision":1},{"task_id":derived["id"],"revision":1}]);
+    let recipe = json!({"name":"Grouped sessions","sources":sources,"modalities":["rgb"],"include_negatives":false,"splits":{"train":50,"val":50,"test":0,"seed":"reproducible"}});
+    let result = lab
+        .store
+        .create_dataset_version(&lab.project, None, &lab.admin, &recipe)
+        .unwrap();
+    let dataset = result["dataset"]["uuid"].as_str().unwrap();
+    let samples = lab
+        .store
+        .dataset_version_samples(&lab.project, dataset, 1, 0, 100)
+        .unwrap();
+    let rows = samples["samples"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|s| s["split"] == rows[0]["split"]));
+    assert_eq!(result["version"]["selection"]["include_negatives"], false);
+    let pinned = std::fs::read(lab.folder.join(format!(
+        "datasets/{dataset}/versions/000000000001/version.json"
+    )))
+    .unwrap();
+    let mut next = recipe.clone();
+    next["base_version"] = json!(1);
+    let updated = lab
+        .store
+        .create_dataset_version(&lab.project, Some(dataset), &lab.admin, &next)
+        .unwrap();
+    assert_eq!(
+        updated["version"]["source_revisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(updated["version"]["number"], 2);
+    assert!(lab
+        .store
+        .create_dataset_version(&lab.project, Some(dataset), &lab.admin, &next)
+        .is_err());
+    assert_eq!(
+        std::fs::read(lab.folder.join(format!(
+            "datasets/{dataset}/versions/000000000001/version.json"
+        )))
+        .unwrap(),
+        pinned
+    );
+    let mut invalid = recipe;
+    invalid["splits"] = json!({"train":80,"val":80,"test":0});
+    assert!(lab
+        .store
+        .create_dataset_version(&lab.project, None, &lab.admin, &invalid)
+        .is_err());
+}
+
+#[test]
+fn skipped_frames_are_excluded_even_if_they_still_contain_labels() {
+    let lab = lab();
+    let mut state =
+        lab.store.recording(&lab.project, &lab.recording).unwrap()["annotations"].clone();
+    state["annotations"]["1"]["0"]["skipped"] = json!(true);
+    lab.store
+        .save_annotations_as(&lab.project, &lab.recording, &state, &lab.alice)
+        .unwrap();
+    let created = task(&lab);
+    let submitted = action(&lab, &created, &lab.alice, "submit", json!({})).unwrap();
+    let claimed = action(&lab, &submitted, &lab.bob, "claim", json!({})).unwrap();
+    action(&lab, &claimed, &lab.bob, "approve", json!({})).unwrap();
+    let result=lab.store.create_dataset_version(&lab.project,None,&lab.admin,&json!({"name":"No skipped frames","sources":[{"task_id":created["id"],"revision":1}],"modalities":["rgb"]})).unwrap();
+    assert_eq!(result["version"]["sample_count"], 2);
+    let samples = lab
+        .store
+        .dataset_version_samples(
+            &lab.project,
+            result["dataset"]["uuid"].as_str().unwrap(),
+            1,
+            0,
+            100,
+        )
+        .unwrap();
+    assert!(samples["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["frame"] != 0));
+}

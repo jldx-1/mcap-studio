@@ -7,12 +7,21 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, fs, io::Write, path::Path};
 
 pub(super) fn preserve_native(record: &Value, preview: &Path, depth: bool) -> Result<bool> {
+    let data = payload_bytes(&record["data"])?;
+    preserve_native_bytes(record, &data, preview, depth)
+}
+
+pub(super) fn preserve_native_bytes(
+    record: &Value,
+    data: &[u8],
+    preview: &Path,
+    depth: bool,
+) -> Result<bool> {
     let encoding = record["pixel_format"]
         .as_str()
         .or(record["encoding"].as_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let data = payload_bytes(&record["data"])?;
     let png16 = data.starts_with(b"\x89PNG") && data.get(24) == Some(&16);
     if !depth
         && !png16
@@ -22,11 +31,17 @@ pub(super) fn preserve_native(record: &Value, preview: &Path, depth: bool) -> Re
     {
         return Ok(false);
     }
-    let mut metadata = record.clone();
-    metadata
-        .as_object_mut()
-        .context("Image metadata must be an object")?
-        .remove("data");
+    // Copy metadata only: cloning the full record first duplicates a potentially
+    // multi-megabyte image payload for every high precision frame.
+    let metadata = Value::Object(
+        record
+            .as_object()
+            .context("Image metadata must be an object")?
+            .iter()
+            .filter(|(key, _)| key.as_str() != "data")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
     fs::write(preview.with_extension("native.bin"), data)?;
     fs::write(
         preview.with_extension("native.json"),
@@ -40,6 +55,20 @@ pub fn ensure_native_training_images(
     index: &Value,
     channels: &[String],
 ) -> Result<()> {
+    let marker = cache.join("frames").join("native-training-index.json");
+    if let Ok(bytes) = fs::read(&marker) {
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            if value["sha256"] == index["sha256"]
+                && channels.iter().all(|ch| {
+                    value["channels"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|v| v == ch))
+                })
+            {
+                return Ok(());
+            }
+        }
+    }
     let missing: Vec<_> = channels
         .iter()
         .filter(|ch| {
@@ -58,21 +87,11 @@ pub fn ensure_native_training_images(
                 })
         })
         .collect();
-    let marker = cache.join("frames").join("native-training-index.json");
-    if let Ok(bytes) = fs::read(&marker) {
-        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-            if value["sha256"] == index["sha256"]
-                && channels.iter().all(|ch| {
-                    value["channels"]
-                        .as_array()
-                        .is_some_and(|a| a.iter().any(|v| v == ch))
-                })
-            {
-                return Ok(());
-            }
-        }
-    }
     if missing.is_empty() {
+        fs::write(
+            marker,
+            serde_json::to_vec(&json!({"sha256":index["sha256"],"channels":channels}))?,
+        )?;
         return Ok(());
     }
     let mut decoder = Decoder::default();
@@ -111,8 +130,24 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
     if !metadata_path.is_file() {
         return Ok(None);
     }
+    let source_path = preview.with_extension("native.bin");
+    let provenance = json!({
+        "metadata": crate::storage::fingerprint(&metadata_path)?,
+        "source": crate::storage::fingerprint(&source_path)?,
+        "depth": depth,
+        "builder_version": 1,
+    });
+    let reuse_path = output.with_extension("npy.json");
+    if let Ok(saved) = crate::storage::read_json(&reuse_path) {
+        if saved["source"] == provenance
+            && crate::storage::fingerprint(output).is_ok_and(|stamp| saved["output"] == stamp)
+            && saved["tensor"].is_object()
+        {
+            return Ok(Some(saved["tensor"].clone()));
+        }
+    }
     let metadata: Value = serde_json::from_slice(&fs::read(&metadata_path)?)?;
-    let source = fs::read(preview.with_extension("native.bin"))?;
+    let source = fs::read(&source_path)?;
     let encoding = metadata["pixel_format"]
         .as_str()
         .or(metadata["encoding"].as_str())
@@ -163,7 +198,8 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         };
         let channels = if encoding.starts_with("rgba") || encoding.starts_with("bgra") {
             4
-        } else if encoding.starts_with("rgb") || encoding.starts_with("bgr") {
+        } else if encoding.starts_with("rgb") || encoding.starts_with("bgr") || encoding == "32fc3"
+        {
             3
         } else {
             1
@@ -184,18 +220,26 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         let big = metadata["is_bigendian"]
             .as_bool()
             .unwrap_or(metadata["is_bigendian"] == 1);
-        let reverse = encoding.starts_with("bgr");
+        let reverse = encoding.starts_with("bgr") || encoding == "32fc3";
+        let row_bytes = width * channels * size;
         let mut bytes = Vec::with_capacity(width * height * channels * size);
-        for y in 0..height {
-            for x in 0..width {
-                for c in 0..channels {
-                    let channel = if reverse && c < 3 { 2 - c } else { c };
-                    let offset = y * stride + (x * channels + channel) * size;
-                    let part = &source[offset..offset + size];
-                    if big {
-                        bytes.extend(part.iter().rev());
-                    } else {
-                        bytes.extend_from_slice(part);
+        if !big && !reverse {
+            // Preserve native little-endian rows directly, excluding padding.
+            for row in source.chunks_exact(stride).take(height) {
+                bytes.extend_from_slice(&row[..row_bytes]);
+            }
+        } else {
+            for y in 0..height {
+                for x in 0..width {
+                    for c in 0..channels {
+                        let channel = if reverse && c < 3 { 2 - c } else { c };
+                        let offset = y * stride + (x * channels + channel) * size;
+                        let part = &source[offset..offset + size];
+                        if big {
+                            bytes.extend(part.iter().rev());
+                        } else {
+                            bytes.extend_from_slice(part);
+                        }
                     }
                 }
             }
@@ -217,7 +261,9 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         header.len() <= u16::MAX as usize,
         "Tensor header is too large"
     );
-    if !output.is_file() {
+    {
+        // Rebuild when provenance or the output fingerprint changed; this also
+        // upgrades old tensors that have no reuse metadata yet.
         fs::create_dir_all(output.parent().context("Missing tensor directory")?)?;
         let mut file = tempfile::NamedTempFile::new_in(output.parent().unwrap())?;
         file.write_all(b"\x93NUMPY\x01\x00")?;
@@ -227,7 +273,12 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         file.as_file().sync_all()?;
         file.persist(output).map_err(|e| e.error)?;
     }
-    Ok(Some(
-        json!({"dtype":descriptor,"shape":if channels==1{vec![height,width]}else{vec![height,width,channels]},"scale":if depth||descriptor.starts_with("<f"){1.0}else if descriptor=="|u1"{255.0}else{65535.0},"units":if depth{"original recorded values"}else{"normalized intensity"}}),
-    ))
+    let tensor = json!({"dtype":descriptor,"shape":if channels==1{vec![height,width]}else{vec![height,width,channels]},"scale":if depth||descriptor.starts_with("<f"){1.0}else if descriptor=="|u1"{255.0}else{65535.0},"units":if depth{"original recorded values"}else{"normalized intensity"}});
+    crate::storage::write_json(
+        &reuse_path,
+        &json!({
+            "source": provenance, "output": crate::storage::fingerprint(output)?, "tensor": tensor,
+        }),
+    )?;
+    Ok(Some(tensor))
 }

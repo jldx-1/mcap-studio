@@ -45,7 +45,7 @@ def main():
                         time.sleep(0.1)
                 else:
                     raise RuntimeError("Backend did not start")
-                subprocess.run(["node", "scripts/api-smoke.mjs", "utils/synthetic_robot_arm.mcap"], cwd=ROOT, env=environment, check=True, timeout=120)
+                subprocess.run(["node", "scripts/api-smoke.mjs", "misc/synthetic_robot_arm.mcap"], cwd=ROOT, env=environment, check=True, timeout=120)
                 request("/auth/login",{"username":"smoke-admin","password":"smoke-test-password-123"})
                 projects = request("/projects")
                 assert len(projects) == 1

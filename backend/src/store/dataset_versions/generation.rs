@@ -23,38 +23,71 @@ fn text_changed(path: &Path, bytes: &[u8]) -> Result<()> {
     temp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
-fn translated_record(
-    readers: &mut HashMap<String, BufReader<File>>,
-    context: &SourceCache,
-    input: &Value,
-    number: usize,
-) -> Result<Value> {
-    let channel = field(input, "channel_id")?;
-    let frame = &context.index["topics"][channel]["frames"][number];
-    let offset = frame["offset"]
-        .as_u64()
-        .context("Sensor frame has no record offset")?;
-    let path = contained_path(
-        &context.cache,
-        &format!("frames/channel_{channel}/records.jsonl"),
-    )?;
-    let key = path.to_string_lossy().into_owned();
-    if !readers.contains_key(&key) {
-        if readers.len() >= 32 {
-            readers.clear();
+#[derive(Default)]
+struct SensorRecords {
+    readers: HashMap<(std::path::PathBuf, String), SensorReader>,
+    translations: HashMap<String, crate::engine::CompiledTranslation>,
+}
+struct SensorReader {
+    file: BufReader<File>,
+    position: u64,
+}
+impl SensorRecords {
+    fn read(&mut self, context: &SourceCache, input: &Value, number: usize) -> Result<Value> {
+        let channel = field(input, "channel_id")?;
+        let frame = &context.index["topics"][channel]["frames"][number];
+        let offset = frame["offset"]
+            .as_u64()
+            .context("Sensor frame has no record offset")?;
+        let key = (context.cache.clone(), channel.to_owned());
+        if !self.readers.contains_key(&key) {
+            // Validate paths when opening a source, then reuse that file handle
+            // instead of repeating filesystem traversal for every sensor row.
+            let path = contained_path(
+                &context.cache,
+                &format!("frames/channel_{channel}/records.jsonl"),
+            )?;
+            if self.readers.len() >= 32 {
+                self.readers.clear();
+            }
+            self.readers.insert(
+                key.clone(),
+                SensorReader {
+                    file: BufReader::with_capacity(256 * 1024, File::open(&path)?),
+                    position: 0,
+                },
+            );
         }
-        readers.insert(key.clone(), BufReader::new(File::open(path)?));
-    }
-    let reader = readers.get_mut(&key).unwrap();
-    reader.seek(SeekFrom::Start(offset))?;
-    let mut line = String::new();
-    reader.take(16 * 1024 * 1024).read_line(&mut line)?;
-    let value: Value = serde_json::from_str(&line)?;
-    let rule = input["translation"].as_str().unwrap_or("");
-    if rule.trim().is_empty() {
-        Ok(value)
-    } else {
-        crate::engine::translate_record(&value, rule)
+        let reader = self.readers.get_mut(&key).unwrap();
+        if offset != reader.position {
+            let delta = offset as i128 - reader.position as i128;
+            if let Ok(delta) = i64::try_from(delta) {
+                // BufReader can satisfy nearby seeks inside its existing buffer.
+                reader.file.seek_relative(delta)?;
+            } else {
+                reader.file.seek(SeekFrom::Start(offset))?;
+            }
+        }
+        let mut line = String::new();
+        (&mut reader.file)
+            .take(16 * 1024 * 1024)
+            .read_line(&mut line)?;
+        reader.position = offset + line.len() as u64;
+        let value: Value = serde_json::from_str(&line)?;
+        let rule = input["translation"].as_str().unwrap_or("");
+        if rule.trim().is_empty() {
+            return Ok(value);
+        }
+        if !self.translations.contains_key(rule) {
+            if self.translations.len() >= 128 {
+                self.translations.clear();
+            }
+            self.translations.insert(
+                rule.to_owned(),
+                crate::engine::CompiledTranslation::parse(rule)?,
+            );
+        }
+        self.translations[rule].apply_owned(value)
     }
 }
 
@@ -111,10 +144,16 @@ impl Store {
             }
         }
         let mut contexts: HashMap<String, SourceCache> = HashMap::new();
-        let mut readers = HashMap::new();
+        let mut readers = SensorRecords::default();
         let mut generated_pages = serde_json::Map::new();
-        let mut csv_file = tempfile::NamedTempFile::new_in(&output)?;
-        let mut csv = BufWriter::new(csv_file.as_file_mut());
+        let mut csv_file = if format == "csv" {
+            Some(tempfile::NamedTempFile::new_in(&output)?)
+        } else {
+            None
+        };
+        let mut csv = csv_file
+            .as_mut()
+            .map(|file| BufWriter::new(file.as_file_mut()));
         let mut schemas: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut updated = 0u64;
         let mut copied = 0u64;
@@ -127,17 +166,20 @@ impl Store {
             "time_ns".into(),
             "inputs".into(),
             "annotation".into(),
+            "split".into(),
         ];
         columns.extend(value_columns.iter().cloned());
-        writeln!(
-            csv,
-            "{}\r",
-            columns
-                .iter()
-                .map(|c| super::super::csv_cell(&json!(c)))
-                .collect::<Vec<_>>()
-                .join(",")
-        )?;
+        if let Some(csv) = &mut csv {
+            writeln!(
+                csv,
+                "{}\r",
+                columns
+                    .iter()
+                    .map(|c| super::super::csv_cell(&json!(c)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
         for (bucket, page) in version["sample_pages"]
             .as_object()
             .context("Invalid immutable membership")?
@@ -202,7 +244,12 @@ impl Store {
                             &context.cache,
                             &format!("frames/{}", field(input, "image")?),
                         )?;
-                        let image_path = format!("{base}/images/{key}_{input_name}.png");
+                        let split = sample["split"].as_str().unwrap_or("train");
+                        ensure!(
+                            ["train", "val", "test"].contains(&split),
+                            "Invalid sample split"
+                        );
+                        let image_path = format!("{base}/images/{split}/{key}_{input_name}.png");
                         let destination = contained_path(&folder, &image_path)?;
                         if !destination.is_file() {
                             fs::create_dir_all(destination.parent().unwrap())?;
@@ -233,12 +280,11 @@ impl Store {
                                 .context("Invalid sensor window")?
                                 as usize;
                             for n in start..=end {
-                                values.push(translated_record(&mut readers, context, input, n)?);
+                                values.push(readers.read(context, input, n)?);
                             }
                         } else if input["interpolation"].is_object() {
                             let r = &input["interpolation"];
-                            let left = translated_record(
-                                &mut readers,
+                            let left = readers.read(
                                 context,
                                 input,
                                 r["left_frame"]
@@ -246,8 +292,7 @@ impl Store {
                                     .context("Invalid interpolation frame")?
                                     as usize,
                             )?;
-                            let right = translated_record(
-                                &mut readers,
+                            let right = readers.read(
                                 context,
                                 input,
                                 r["right_frame"]
@@ -255,7 +300,7 @@ impl Store {
                                     .context("Invalid interpolation frame")?
                                     as usize,
                             )?;
-                            let fallback = translated_record(&mut readers, context, input, number)?;
+                            let fallback = readers.read(context, input, number)?;
                             let numerator = field(r, "numerator")?.parse::<i128>()?;
                             let denominator = field(r, "denominator")?.parse::<i128>()?;
                             values.push(crate::engine::interpolate_records(
@@ -266,7 +311,7 @@ impl Store {
                                 denominator,
                             )?);
                         } else {
-                            values.push(translated_record(&mut readers, context, input, number)?);
+                            values.push(readers.read(context, input, number)?);
                         }
                         for value in &values {
                             collect_numeric_fields(
@@ -323,29 +368,38 @@ impl Store {
                         ));
                     }
                     text_changed(
-                        &contained_path(&folder, &format!("{base}/labels/{file}.txt"))?,
+                        &contained_path(
+                            &folder,
+                            &format!(
+                                "{base}/labels/{}/{file}.txt",
+                                sample["split"].as_str().unwrap_or("train")
+                            ),
+                        )?,
                         yolo.as_bytes(),
                     )?;
                 }
-                let mut cells = vec![
-                    sample["mcap_uuid"].clone(),
-                    sample["approved_revision"]["revision"].clone(),
-                    sample["channel_id"].clone(),
-                    sample["frame"].clone(),
-                    sample["time_ns"].clone(),
-                    sample["inputs"].clone(),
-                    sample["annotation"].clone(),
-                ];
-                cells.extend(value_columns.iter().map(|c| sample["values"][c].clone()));
-                writeln!(
-                    csv,
-                    "{}\r",
-                    cells
-                        .iter()
-                        .map(super::super::csv_cell)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )?;
+                if let Some(csv) = &mut csv {
+                    let mut cells = vec![
+                        sample["mcap_uuid"].clone(),
+                        sample["approved_revision"]["revision"].clone(),
+                        sample["channel_id"].clone(),
+                        sample["frame"].clone(),
+                        sample["time_ns"].clone(),
+                        sample["inputs"].clone(),
+                        sample["annotation"].clone(),
+                        sample["split"].clone(),
+                    ];
+                    cells.extend(value_columns.iter().map(|c| sample["values"][c].clone()));
+                    writeln!(
+                        csv,
+                        "{}\r",
+                        cells
+                            .iter()
+                            .map(super::super::csv_cell)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )?;
+                }
                 rows.insert(key, sample);
             }
             if !sensor_bytes.is_empty() {
@@ -364,15 +418,21 @@ impl Store {
             }
             generated_pages.extend(materialized.as_object().unwrap().clone());
         }
-        csv.flush()?;
+        if let Some(csv) = &mut csv {
+            csv.flush()?;
+        }
         drop(csv);
-        if format == "csv" {
+        if let Some(csv_file) = csv_file {
             csv_file.as_file().sync_all()?;
             csv_file
                 .persist(contained_path(&folder, &format!("{base}/samples.csv"))?)
                 .map_err(|e| e.error)?;
         }
         if format == "yolo" {
+            for split in ["train", "val", "test"] {
+                fs::create_dir_all(contained_path(&folder, &format!("{base}/images/{split}"))?)?;
+                fs::create_dir_all(contained_path(&folder, &format!("{base}/labels/{split}"))?)?;
+            }
             let names: Vec<_> = version["labels"]
                 .as_array()
                 .unwrap()
@@ -382,7 +442,7 @@ impl Store {
             text_changed(
                 &contained_path(&folder, &format!("{base}/data.yaml"))?,
                 format!(
-                    "path: .\ntrain: images\nnames: {}\n",
+                    "path: .\ntrain: images/train\nval: images/val\ntest: images/test\nnames: {}\n",
                     serde_json::to_string(&names)?
                 )
                 .as_bytes(),
@@ -438,5 +498,118 @@ fn collect_numeric_fields(value: &Value, prefix: &str, names: &mut BTreeSet<Stri
             names.insert(prefix.into());
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sensor_reads_preserve_offsets_across_windows_and_compile_each_rule_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("frames/channel_1")).unwrap();
+        let mut bytes = Vec::new();
+        let mut frames = Vec::new();
+        for value in 0..5 {
+            frames.push(json!({"offset":bytes.len()}));
+            // Cross the reader's buffer boundary as well as testing nearby seeks.
+            serde_json::to_writer(
+                &mut bytes,
+                &json!({"value":value,"padding":"x".repeat(100_000)}),
+            )
+            .unwrap();
+            bytes.push(b'\n');
+        }
+        fs::write(dir.path().join("frames/channel_1/records.jsonl"), bytes).unwrap();
+        let source = SourceCache {
+            index: std::sync::Arc::new(json!({"topics":{"1":{"frames":frames}}})),
+            cache: dir.path().to_owned(),
+            source_sha: Value::Null,
+        };
+        let input = json!({"channel_id":"1","translation":"scaled <- source.value * 2"});
+        let mut records = SensorRecords::default();
+        for number in [0, 1, 2, 1, 2, 3, 4, 0, 4] {
+            assert_eq!(
+                records.read(&source, &input, number).unwrap(),
+                json!({"scaled":number*2})
+            );
+        }
+        assert_eq!(records.translations.len(), 1);
+        assert_eq!(records.readers.len(), 1);
+        assert_eq!(
+            records
+                .read(
+                    &source,
+                    &json!({"channel_id":"1","translation":"scaled <- source.value * 3"}),
+                    4
+                )
+                .unwrap(),
+            json!({"scaled":12})
+        );
+        assert_eq!(records.translations.len(), 2);
+    }
+
+    #[test]
+    #[ignore = "sensor-window throughput benchmark; use --release --ignored --nocapture"]
+    fn sensor_window_throughput() {
+        use std::time::Instant;
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("frames/channel_1")).unwrap();
+        let mut bytes = Vec::new();
+        let mut frames = Vec::new();
+        for value in 0..10_000 {
+            frames.push(json!({"offset":bytes.len()}));
+            serde_json::to_writer(&mut bytes, &json!({"value":value,"vector":[1,2,3]})).unwrap();
+            bytes.push(b'\n');
+        }
+        let path = dir.path().join("frames/channel_1/records.jsonl");
+        fs::write(&path, bytes).unwrap();
+        let source = SourceCache {
+            index: std::sync::Arc::new(json!({"topics":{"1":{"frames":frames}}})),
+            cache: dir.path().to_owned(),
+            source_sha: Value::Null,
+        };
+        let script = "scaled <- source.value * 2\ncomponent <- source.vector[1] + 3";
+        let input = json!({"channel_id":"1","translation":script});
+        let mut reference = BufReader::new(File::open(path).unwrap());
+        let mut expected_sum = 0;
+        let started = Instant::now();
+        for anchor in 0..5_000 {
+            for number in anchor..anchor + 8 {
+                let _ = contained_path(&source.cache, "frames/channel_1/records.jsonl").unwrap();
+                reference
+                    .seek(SeekFrom::Start(
+                        source.index["topics"]["1"]["frames"][number]["offset"]
+                            .as_u64()
+                            .unwrap(),
+                    ))
+                    .unwrap();
+                let mut line = String::new();
+                reference.read_line(&mut line).unwrap();
+                let value =
+                    crate::engine::translate_record(&serde_json::from_str(&line).unwrap(), script)
+                        .unwrap();
+                expected_sum += value["scaled"].as_u64().unwrap();
+            }
+        }
+        let before = started.elapsed();
+        let mut records = SensorRecords::default();
+        let mut actual_sum = 0;
+        let started = Instant::now();
+        for anchor in 0..5_000 {
+            for number in anchor..anchor + 8 {
+                actual_sum += records.read(&source, &input, number).unwrap()["scaled"]
+                    .as_u64()
+                    .unwrap();
+            }
+        }
+        let after = started.elapsed();
+        assert_eq!(actual_sum, expected_sum);
+        eprintln!(
+            "40,000 overlapping sensor reads: previous {:.3}s, buffered/compiled {:.3}s ({:.2}x)",
+            before.as_secs_f64(),
+            after.as_secs_f64(),
+            before.as_secs_f64() / after.as_secs_f64()
+        );
     }
 }
