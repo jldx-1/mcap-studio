@@ -64,3 +64,6 @@ fn integer_value(value: i128) -> Result<Value> {
 
 #[cfg(test)]
 mod tests;
+
+mod recording_metadata;
+pub use recording_metadata::recording_metadata;

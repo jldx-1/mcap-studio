@@ -67,12 +67,35 @@ impl Store {
         }
         if let Some(items) = detail["mcaps"].as_array_mut() {
             for item in items {
+                if let Some(metadata) = self.recording_file_metadata(folder, item) {
+                    item.as_object_mut()
+                        .unwrap()
+                        .extend(metadata.as_object().unwrap().clone());
+                }
                 if let Some(summary) = self.recording_summary(folder, project, item) {
                     item["summary"] = summary;
                 }
             }
         }
         detail
+    }
+
+    fn recording_file_metadata(&self, folder: &Path, item: &Value) -> Option<Value> {
+        let path = contained_path(folder, item["path"].as_str()?).ok()?;
+        let stamp = crate::storage::fingerprint(&path).ok()?;
+        let cache = contained_path(
+            folder,
+            &format!("indexes/{}/recording-metadata.json", item["uuid"].as_str()?),
+        )
+        .ok()?;
+        if let Ok(saved) = self.cached_json(&cache) {
+            if saved["fingerprint"] == stamp {
+                return Some(saved["metadata"].clone());
+            }
+        }
+        let metadata = crate::engine::recording_metadata(&path).ok()?;
+        let _ = write_json(&cache, &json!({"fingerprint":stamp,"metadata":metadata}));
+        Some(metadata)
     }
 
     // Summaries use existing indexes; opening a project never decodes recording data.

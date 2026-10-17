@@ -22,6 +22,9 @@ export interface RecordingMetrics {
 }
 
 export interface RecordingSummary {
+  file_size_bytes?: number;
+  topic_count?: number;
+  duration_seconds?: number;
   source_recording_uuid?: string;
   source_root_uuid?: string;
   session_id?: string;
