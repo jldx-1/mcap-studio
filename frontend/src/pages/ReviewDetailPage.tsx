@@ -15,6 +15,7 @@ import type { Project } from "../types/models";
 import type { ReviewNavigationTarget } from "../types/reviews";
 import { statusLabel } from "../types/reviews";
 import type { Perform } from "../types/workspace";
+import type { ReviewPosition } from "../utils/reviewReferences";
 import { filename } from "../utils/recordings";
 
 export function ReviewDetailPage({project,target,busy,perform,onError,onBack}: {
@@ -23,6 +24,7 @@ export function ReviewDetailPage({project,target,busy,perform,onError,onBack}: {
 }) {
   const controller = useReviewTasks(project.uuid,onError);
   const {user,session}=useAuth();
+  const [position,setPosition]=useState<ReviewPosition|null>(null);
   const [starting,setStarting]=useState(false);
   const task = controller.tasks.find((value)=>value.id===target?.taskId);
   const {revisions,revision,recording,number,setNumber} = useReviewRevision(project.uuid,task,onError);
@@ -32,7 +34,7 @@ export function ReviewDetailPage({project,target,busy,perform,onError,onBack}: {
   const appliedTarget = useRef(false);
   useEffect(()=>{window.scrollTo({top:0});},[]);
   useEffect(()=>{
-    setJump(null);
+    setJump(null);setPosition(null);
   },[number]);
   useEffect(()=>{
     if(appliedTarget.current||!revision||!recording)return;
@@ -67,9 +69,9 @@ export function ReviewDetailPage({project,target,busy,perform,onError,onBack}: {
         </div>
       </section>
       <div className="review-workspace" ref={playerRef}>
-        {recording?<ReviewPlayer key={`${task.id}/${number}`} project={project} task={{...task,scopes:revision.scopes}} revision={revision} recording={recording} jump={jump} onError={onError} onBeginReview={()=>void beginReview()}/>:<section className="panel collection-body"><p role="status">{revision.snapshot_available?"Loading submitted snapshot…":"This older review has no recoverable annotation snapshot. Its feedback and decision are preserved."}</p></section>}
+        {recording?<ReviewPlayer key={`${task.id}/${number}`} project={project} task={{...task,scopes:revision.scopes}} revision={revision} recording={recording} jump={jump} onError={onError} onBeginReview={()=>void beginReview()} onPositionChange={setPosition}/>:<section className="panel collection-body"><p role="status">{revision.snapshot_available?"Loading submitted snapshot…":"This older review has no recoverable annotation snapshot. Its feedback and decision are preserved."}</p></section>}
         <div className="review-feedback-column" ref={feedbackRef}>
-          <ReviewActions key={`${task.id}/${number}`} project={project} task={task} revision={revision} controller={controller} onError={onError} onJump={navigate} starting={starting}/>
+          <ReviewActions key={`${task.id}/${number}`} project={project} task={task} revision={revision} controller={controller} onError={onError} onJump={navigate} starting={starting} recording={recording} position={position}/>
         </div>
       </div>
       {previousFeedback&&<section className="panel previous-review-feedback"><div className="panel-heading"><h2>Previous review feedback</h2><span className="pill">Revision {previousFeedback.number}</span></div><div className="collection-body"><RevisionFeedback revision={previousFeedback} onJump={navigate}/><button className="button secondary small" onClick={()=>setNumber(previousFeedback.number)}>Open revision {previousFeedback.number} snapshot</button></div></section>}

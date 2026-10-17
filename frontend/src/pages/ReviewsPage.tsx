@@ -29,14 +29,14 @@ export function ReviewsPage({ project, busy, perform, onError, onOpen }: {
   }).sort((a, b) => (b.latest_revision?.submitted_at || "").localeCompare(a.latest_revision?.submitted_at || ""));
 
   return <div className="feature-stack reviews-queue-page">
-    <div className="page-heading"><div><h1>Reviews</h1><p>Open a submitted MCAP revision to approve it or request changes.</p></div>
+    <div className="page-heading"><div><h1>Reviews</h1><p>Open a submitted MCAP revision to play the data, approve the revision, or submit feedback.</p></div>
       <button className="button secondary" disabled={busy} onClick={() => void perform("Refreshing reviews", controller.refresh)}>Refresh</button></div>
     <section className="panel"><div className="panel-heading"><div><h2>{filter === "open" ? "Open reviews" : filter === "approved" ? "Approved reviews" : "Submitted reviews"}</h2><p>{tasks.length} reviews</p></div></div>
       <div className="collection-body review-queue-filters">
         <label>MCAP<input type="search" aria-label="Search reviews" placeholder="Search MCAPs…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
         <label>Status<select aria-label="Review queue filter" value={filter} onChange={(event) => setFilter(event.target.value)}>
           <option value="open">All open reviews</option><option value="submitted">Ready for review</option><option value="under_review">Under review</option>
-          <option value="changes_requested">Changes requested</option><option value="approved">Approved</option><option value="all">All submissions</option>
+          <option value="changes_requested">Feedback received</option><option value="approved">Approved</option><option value="all">All submissions</option>
         </select></label>
         <label className="check-label"><input type="checkbox" checked={mine} onChange={(event) => setMine(event.target.checked)} />Assigned to me</label>
       </div>

@@ -18,6 +18,6 @@ export interface ReviewRevision {id:string;task_id:string;recording_id:string;nu
 export interface RevisionDiff {base:number;revision:number;total:number;changes:{channel_id:string;frame:number;kind:"added"|"deleted"|"modified";before:unknown;after:unknown}[];labels_changed:boolean;ranges_changed:boolean;csv_changed:boolean}
 export const statusLabel: Record<ReviewStatus, string> = {
   unlabeled: "Not started", in_progress: "Annotating", submitted: "Ready for review",
-  under_review: "Under review", changes_requested: "Changes requested", approved: "Approved",
+  under_review: "Under review", changes_requested: "Feedback received", approved: "Approved",
   superseded:"Superseded",withdrawn:"Withdrawn",
 };
