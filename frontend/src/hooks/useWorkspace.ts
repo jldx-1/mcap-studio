@@ -217,7 +217,7 @@ export function useWorkspace() {
   const serverImported = async (items: RecordingSummary[]) => {
     if (!project) return;
     await updateProject(await workspaceApi.project(project.uuid));
-    setPreparationRecordings(items); setPage("prepare");
+    setPreparationRecordings(items); setPage("mcaps");
   };
   const nextLabeling = async () => {
     if (!recording || !project || !(await canLeave())) return;
@@ -302,10 +302,10 @@ export function useWorkspace() {
     setPendingUploads(current => current.filter(f => !profiles.length || !/\.(json|txt)$/i.test(f.name)));
     if (importedRecordings.length) {
       setPreparationRecordings([...new Map(importedRecordings.map(r => [r.uuid, r])).values()]);
-      if (!["labeling", "structured", "review"].includes(page)) setPage("prepare");
+      if (!["labeling", "structured", "review"].includes(page)) setPage("mcaps");
     }
     if (importedRecordings.length || profiles.length) {
-    setNotice(`${importedRecordings.length} recordings ready to prepare${duplicates ? ` · ${duplicates} existing recordings reused` : ""}${profiles.length ? ` · ${profiles.length} translations loaded` : ""}.`);
+    setNotice(`${importedRecordings.length} recordings loaded${duplicates ? ` · ${duplicates} existing recordings reused` : ""}${profiles.length ? ` · ${profiles.length} translations loaded` : ""}.`);
     } else {
       setNotice("");
     }

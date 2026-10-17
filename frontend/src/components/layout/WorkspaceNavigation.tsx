@@ -1,4 +1,5 @@
 import { Activity, ArrowLeft, ClipboardCheck, Users, Database, FolderOpen, Layers3, Menu, Tag } from "lucide-react";
+import { Notifications } from "../notifications/Notifications";
 import { AccountMenu } from "../accounts/AccountMenu";
 import type { ReactNode } from "react";
 import type { WorkspaceController } from "../../hooks/useWorkspace";
@@ -57,7 +58,7 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
   </aside>);
 }
 
-export function WorkspaceTopbar({ workspace }: { workspace: Pick<WorkspaceController, "page" | "sidebar" | "setSidebar" | "project" | "recording" | "connected" | "busy" | "go"> }) {
+export function WorkspaceTopbar({ workspace }: { workspace: WorkspaceController }) {
   const { page, sidebar, setSidebar, project, recording, connected, busy, go } = workspace;
 
   return (<header className="topbar">
@@ -103,7 +104,7 @@ export function WorkspaceTopbar({ workspace }: { workspace: Pick<WorkspaceContro
         )}
       </nav>
     </div>
-    <span
+    <div className="topbar-status">{project&&<Notifications key={`${workspace.user?.id}/${project.uuid}`} workspace={workspace} project={project}/>}<span
       className={`connection ${connected === false ? "offline" : ""}`}
     >
       <span />
@@ -112,6 +113,6 @@ export function WorkspaceTopbar({ workspace }: { workspace: Pick<WorkspaceContro
         : connected
           ? "Backend connected"
           : "Backend offline"}
-    </span>
+    </span></div>
   </header>);
 }

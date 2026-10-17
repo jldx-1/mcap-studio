@@ -11,7 +11,6 @@ import { WorkspaceDialogs } from "./components/WorkspaceDialogs";
 import { useWorkspace } from "./hooks/useWorkspace";
 import { useFileDrop } from "./hooks/useFileDrop";
 import { RecordingPreparation } from "./components/processing/RecordingPreparation";
-import { PreparationJobs } from "./components/processing/PreparationJobs";
 import { McapsPage } from "./pages/McapsPage";
 import { ProjectOverview } from "./pages/ProjectOverview";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -133,8 +132,6 @@ function Workspace() {
             </div>
           )}
           <WorkspaceHeading workspace={workspace} uploadButton={uploadButton} />
-          {project && <PreparationJobs project={project} busy={!!busy} perform={perform} onJobs={workspace.resolveLabelingJobs} onProject={updateProject} onLabel={id => void workspace.startLabeling(id, [...new Set([...workspace.labelingQueue, id])])} canManage={can(project, auth.user, "project.manage")} />}
-          {project && workspace.preparationRecordings.length > 0 && page !== "prepare" && <div className="pending-import-banner"><span>{workspace.preparationRecordings.length} recordings ready to prepare</span><button className="button secondary small" disabled={!!busy} onClick={() => void go("prepare")}>Prepare recordings</button></div>}
           {project && workspace.labelingQueue.length > 0 && !["labeling", "structured", "prepare"].includes(page) && <div className="pending-import-banner"><span>{workspace.labelingQueue.length} recordings in your labeling queue</span><button className="button primary small" disabled={!!busy} onClick={() => void workspace.startLabeling(workspace.labelingQueue[0])}>Continue labeling queue</button><button className="text-button" disabled={!!busy} onClick={() => workspace.saveLabelingQueue([])}>Clear queue</button></div>}
           {project && page === "prepare" && <RecordingPreparation project={project} recordings={workspace.preparationRecordings} translations={workspace.translationFiles} busy={!!busy} perform={perform} onNotice={setNotice} onQueued={workspace.preparationQueued} onCancel={() => void go("mcaps")} />}
           {!project && page === "projects" && <ProjectsPage workspace={workspace} />}
