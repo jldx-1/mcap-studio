@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 if (existsSync(new URL("../.env", import.meta.url)))
@@ -87,6 +88,22 @@ function launch(command, args, name, env) {
   });
 }
 
+async function waitForBackend(portNumber) {
+  const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
+  const address = probeHost.includes(":") ? `[${probeHost}]` : probeHost;
+  const url = `http://${address}:${portNumber}/api/health`;
+  while (!stopping) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      await response.body?.cancel();
+      if (response.ok) return;
+    } catch {
+      // Cargo may still be compiling, or the backend may still be starting.
+    }
+    await delay(250);
+  }
+}
+
 try {
   const backend = port(
     process.env.MCAP_BACKEND_PORT,
@@ -115,7 +132,7 @@ try {
     MCAP_BACKEND_PORT: String(backend),
   };
   console.log(
-    `MCAP Studio → http://${host}:${frontend}\nRust API → http://${host}:${backend}/api/health\nThe first backend build can take a few minutes. Ctrl+C stops both services.\n`,
+    `Starting the Rust backend first.\nRust API → http://${host}:${backend}/api/health\nThe first backend build can take a few minutes. Ctrl+C stops both services.\n`,
   );
   process.once("SIGINT", () => stop(130));
   process.once("SIGTERM", () => stop(143));
@@ -125,24 +142,28 @@ try {
     "Rust backend",
     env,
   );
-  launch(
-    "npm",
-    [
-      "--prefix",
-      "frontend",
-      "run",
-      "dev",
-      "--",
-      "--host",
-      host,
-      "--port",
-      String(frontend),
-      "--strictPort",
-    ],
-    "React frontend",
-    env,
-  );
+  await waitForBackend(backend);
+  if (!stopping) {
+    console.log(`Backend ready. Starting the frontend → http://${host}:${frontend}\n`);
+    launch(
+      "npm",
+      [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        host,
+        "--port",
+        String(frontend),
+        "--strictPort",
+      ],
+      "React frontend",
+      env,
+    );
+  }
 } catch (error) {
   console.error(error.message);
-  process.exit(1);
+  stop(1);
 }
