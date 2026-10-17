@@ -1,0 +1,68 @@
+import assert from "node:assert/strict";
+import {readFile,stat} from "node:fs/promises";
+import {basename} from "node:path";
+const {chromium}=await import(process.env.MCAP_PLAYWRIGHT_MODULE||"playwright");
+const url=process.env.MCAP_UI_URL||"http://127.0.0.1:8000",fixture=process.argv[2];
+assert.ok(fixture,"Usage: node scripts/recordings-smoke.mjs /path/to/camera-and-sensor.mcap");
+const browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
+try {
+  const page=await browser.newPage({viewport:{width:1440,height:1050},extraHTTPHeaders:{"X-Requested-With":"mcap-workbench"}});
+  const errors=[];page.on("pageerror",error=>errors.push(error.message));
+  const call=async(path,body)=>{const response=body===undefined?await page.request.get(`${url}/api${path}`):await page.request.post(`${url}/api${path}`,{data:body});assert.ok(response.ok(),await response.text());return response.json();};
+  assert.equal((await call("/auth/session")).setup_required,true,"Use a fresh test workspace");
+  await call("/auth/setup",{username:"table-admin",name:"Table administrator",password:"browser-test-password-123"});
+  const project=await call("/projects",{name:`Recording table ${Date.now()}`}),base=`/projects/${project.uuid}`;
+  const bytes=await readFile(fixture);
+  const upload=await page.request.post(`${url}/api${base}/recordings?defer_index=true&auto_translate=false`,{multipart:{file:{name:basename(fixture),mimeType:"application/octet-stream",buffer:bytes}}});
+  assert.ok(upload.ok(),await upload.text());const recording=await upload.json();
+  const detail=await call(base),item=detail.mcaps[0];
+  assert.equal(item.file_size_bytes,(await stat(fixture)).size);
+  assert.ok(item.topic_count>0);assert.ok(item.duration_seconds>0);assert.equal(item.summary,undefined,"Metrics are available before preview indexing");
+  // Exercise pagination with independent display rows; uploads and translation
+  // operations below use the real recording and backend endpoints.
+  await page.route(`**/api${base}`,async route=>{
+    const response=await route.fetch(),value=await response.json();
+    const sample=value.mcaps.find(value=>value.uuid===recording.uuid);
+    value.mcaps.push(...Array.from({length:32},(_,index)=>({...sample,uuid:`table-fixture-${index}`,source_file:`capture-${String(index+1).padStart(2,"0")}.mcap`,created_at:"2020-01-01T00:00:00Z"})));
+    await route.fulfill({response,json:value});
+  });
+  await page.goto(url);await page.getByRole("button",{name:new RegExp(project.name)}).click();
+  const nav=name=>page.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name,exact:true});
+  await nav("Recordings").click();
+  await page.getByRole("heading",{name:"Recordings",level:1,exact:true}).waitFor();
+  assert.equal(await page.getByRole("button",{name:"Load from server",exact:true}).count(),0);
+  assert.equal(await page.getByRole("button",{name:"Create dataset",exact:true}).count(),0);
+  await page.getByRole("region",{name:"Upload MCAP recordings",exact:true}).waitFor();
+  const rows=page.locator(".recordings-table tbody tr");assert.equal(await rows.count(),10);
+  assert.deepEqual(await page.locator(".recordings-table th").allTextContents(),["Recording","Topics","Length","File size","Status","Actions"]);
+  assert.equal(await page.getByLabel("Recordings per page",{exact:true}).inputValue(),"10");
+  await page.getByRole("button",{name:"Next recordings page",exact:true}).click();await page.getByText("11–20 of 33",{exact:true}).waitFor();
+  await page.getByLabel("Recordings per page",{exact:true}).selectOption("20");assert.equal(await rows.count(),20);
+  await page.getByLabel("Recordings per page",{exact:true}).selectOption("50");assert.equal(await rows.count(),33);
+  await page.getByLabel("Recordings per page",{exact:true}).selectOption("10");
+  await page.getByLabel("Search included MCAPs",{exact:true}).fill("capture-32");assert.equal(await rows.count(),1);
+  await page.getByLabel("Search included MCAPs",{exact:true}).fill("missing-recording");await page.getByText("No recordings match your search.",{exact:true}).waitFor();
+  await page.getByLabel("Search included MCAPs",{exact:true}).fill(basename(fixture));assert.equal(await rows.count(),1);
+  await page.screenshot({path:"/tmp/mcap-recordings-table.png",fullPage:true});
+  const transfer=await page.evaluateHandle(({name,data})=>{const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array(data)],name,{type:"application/octet-stream"}));return transfer;},{name:basename(fixture),data:Array.from(bytes)});
+  const uploaded=page.waitForResponse(response=>response.url().includes("/recordings?defer_index=true")&&response.request().method()==="POST");
+  await page.getByRole("region",{name:"Upload MCAP recordings",exact:true}).dispatchEvent("drop",{dataTransfer:transfer});assert.ok((await uploaded).ok());await transfer.dispose();
+  await page.getByRole("heading",{name:"Recordings",level:1,exact:true}).waitFor();
+  await nav("Labels & Translations").click();await page.getByRole("heading",{name:"Label lists",exact:true}).waitFor();
+  await page.getByLabel("Translation recording",{exact:true}).selectOption(recording.uuid);
+  const topic="/robot/motors";
+  await page.getByRole("button",{name:`Edit translation for ${topic}`,exact:true}).click();
+  await page.getByLabel("Translation name",{exact:true}).fill("Browser identity");
+  await page.getByLabel("Topic translation script",{exact:true}).fill("* -> *");
+  await page.getByRole("heading",{name:"Current input",exact:true}).waitFor();
+  await page.getByRole("button",{name:"Save translation",exact:true}).click();
+  await page.waitForFunction(topic=>!!document.querySelector(`select[aria-label="Saved translation for ${topic}"]`)?.value,topic);
+  await page.screenshot({path:"/tmp/mcap-labels-translations.png",fullPage:true});
+  await page.getByRole("button",{name:"Apply selected translations",exact:true}).click();
+  await page.getByRole("heading",{name:"Data labeling table",exact:true}).waitFor();
+  assert.equal(await page.getByRole("columnheader",{name:"Translation script",exact:true}).count(),0);
+  await page.getByRole("button",{name:"Manage labels & translations",exact:true}).click();
+  await page.getByRole("heading",{name:"Labels & Translations",level:1,exact:true}).waitFor();
+  assert.deepEqual(errors,[]);
+  console.log("Passed: recording metrics before previews, searchable paginated table, MCAP drop upload, combined label/translation management, script saving and application.");
+} finally {await browser.close();}

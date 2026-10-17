@@ -23,7 +23,7 @@ try {
   const bob = await call(admin,"/accounts/users",{username:"bob",name:"Bob",password:credentials.password,groups:[groups.find((g) => g.name === "Reviewers").id],permissions:[]});
   let project = await call(admin,"/projects",{name:`Review workflow ${Date.now()}`});const base = `/projects/${project.uuid}`;
   await call(admin,`${base}/members`,{members:[{user_id:alice.id},{user_id:bob.id}]} ,"put");
-  const upload = await admin.request.post(`${url}/api${base}/recordings?defer_index=true`,{multipart:{file:{name:basename(fixture),mimeType:"application/octet-stream",buffer:await readFile(fixture)}}});
+  const upload = await admin.request.post(`${url}/api${base}/recordings?defer_index=true&auto_translate=false`,{multipart:{file:{name:basename(fixture),mimeType:"application/octet-stream",buffer:await readFile(fixture)}}});
   assert.ok(upload.ok(),await upload.text());const imported = await upload.json();
   project = await call(admin,`${base}/labels`,{name:"robot"});project = await call(admin,`${base}/label-lists`,{name:"Objects",label_ids:[project.labels[0].uuid]});
   const recording = await call(admin,`${base}/recordings/${imported.uuid}`);const channel = String(recording.topics.find((t) => t.kind === "image").channel_id);
@@ -55,8 +55,8 @@ try {
   const alicePage = await signIn(annotator,"alice");
   assert.equal(await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"Reviews",exact:true}).count(),1);
   assert.equal(await alicePage.getByRole("button",{name:"Load MCAPs",exact:true}).count(),0);
-  await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"MCAPs",exact:true}).click();
-  await alicePage.getByRole("button",{name:new RegExp(`${basename(fixture)}.*Open topic table`)}).click();
+  await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"Recordings",exact:true}).click();
+  await alicePage.getByRole("button",{name:`Open recording ${basename(fixture)}`,exact:true}).click();
   await alicePage.getByRole("button",{name:/Create Labels for/}).click();
   await alicePage.locator(".workflow-current-status").getByText("Not started",{exact:true}).waitFor();
   await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();
@@ -84,7 +84,7 @@ try {
   const memberships=await call(admin,`${base}/members`);
   await call(admin,`${base}/members`,{members:[...memberships,...reviewers.map((account,index)=>({user_id:account.id,denied_permissions:index===17?["review.view"]:[]})),{user_id:disabled.id}]},"put");
 
-  await nav(adminPage,"MCAPs").click();await statusLink(adminPage,"Ready for review").waitFor();
+  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").waitFor();
   assert.equal(await adminPage.locator(".mcap-review-bar,.working-copy-assignment").count(),0,"MCAP browsing has no workflow or assignments");
   assert.equal(await adminPage.getByRole("button",{name:"Assign to me",exact:true}).count(),0);
   await adminPage.screenshot({path:"/tmp/mcap-lightweight-status.png",fullPage:true});
@@ -129,7 +129,15 @@ try {
   await call(admin,`${base}/recordings/${recording.uuid}/annotations`,{sha256:recording.sha256,return_delta:true,metadata:{techniques:{...currentAnnotations.techniques,[String(motor.channel_id)]:"csv"}},changes:[{channel_id:String(motor.channel_id),frame:0,annotation:{reviewed:true,boxes:[],labels:[],fields:{quality:"ok"}}}]},"patch");
   const otherTask=await call(admin,`${base}/tasks`,{title:"Sensor review",recording_id:recording.uuid,scopes:[{channel_id:String(motor.channel_id),start_frame:0,end_frame:0}],reviewer_id:reviewers[0].id});
   await call(admin,`${base}/tasks/${otherTask.id}/actions`,{action:"submit",expected_version:otherTask.version});
-  const bobPage=await signIn(reviewer,"bob");await nav(bobPage,"Reviews").click();
+  const bobPage=await signIn(reviewer,"bob");
+  await bobPage.getByRole("button",{name:/^Notifications/}).click();
+  const notifications=bobPage.getByRole("region",{name:"Notifications",exact:true});
+  await notifications.getByRole("button",{name:"Open review",exact:true}).waitFor();
+  assert.equal(await notifications.getByRole("button",{name:"Open review",exact:true}).count(),1,"Only the assigned review appears; another reviewer’s task is excluded");
+  await bobPage.getByRole("button",{name:"Notifications",exact:true}).waitFor();
+  await bobPage.keyboard.press("Escape");
+  assert.equal(await notifications.count(),0);
+  await nav(bobPage,"Reviews").click();
   await bobPage.getByRole("heading",{name:"Open reviews",exact:true}).waitFor();
   await bobPage.locator(".review-queue-table tbody tr").nth(1).waitFor();
   assert.equal(await bobPage.locator(".review-queue-table tbody tr").count(),2);
@@ -140,7 +148,7 @@ try {
   await bobPage.screenshot({path:"/tmp/mcap-reviews-queue.png",fullPage:true});
   const imageRow=bobPage.locator(".review-queue-table tbody tr").filter({has:bobPage.getByText("Alice",{exact:true})});
   await imageRow.getByRole("button",{name:"Open review",exact:true}).click();
-  await bobPage.getByRole("button",{name:"Approve Revision",exact:true}).waitFor();
+  await bobPage.getByRole("button",{name:"Approve revision",exact:true}).waitFor();
   assert.equal(await bobPage.locator(".review-queue-table").count(),0);
   assert.equal(await bobPage.getByRole("button",{name:/Approve.*frame/i}).count(),0);
   assert.equal(await bobPage.getByRole("button",{name:"Change reviewer",exact:true}).count(),0);
@@ -150,21 +158,23 @@ try {
   await bobPage.getByRole("button",{name:"Pause review playback",exact:true}).click();
   assert.equal(Number(await bobPage.getByLabel("Review timeline",{exact:true}).getAttribute("max")),recording.index.topics[channel].frames.length-1,"Playback includes the entire source video, beyond the submitted segment");
   assert.ok((await bobPage.locator(".review-video image").getAttribute("href")).startsWith("blob:"));
-  await bobPage.getByRole("button",{name:"Add frame range comment",exact:true}).click();
-  await bobPage.getByLabel("First frame",{exact:true}).fill("2");await bobPage.getByLabel("Last frame",{exact:true}).fill("2");
+  await bobPage.getByLabel("Review frame number",{exact:true}).fill("2");
+  await bobPage.getByRole("button",{name:"Reference current frame",exact:true}).click();
+  assert.equal(await bobPage.getByLabel("Frame ID",{exact:true}).inputValue(),"2");
   await bobPage.getByLabel("Review feedback",{exact:true}).fill("Please label frame 2 rather than treating it as empty.");
-  await bobPage.getByRole("button",{name:"Add comment",exact:true}).click();
-  await bobPage.getByRole("button",{name:"Add frame range comment",exact:true}).click();
-  await bobPage.getByLabel("First frame",{exact:true}).fill("1");await bobPage.getByLabel("Last frame",{exact:true}).fill("2");
-  await bobPage.getByLabel("Review feedback",{exact:true}).fill("Confirm the robot labels in this section.");
-  await bobPage.getByRole("button",{name:"Add comment",exact:true}).click();
-  await bobPage.getByRole("button",{name:"Add general comment",exact:true}).click();
+  await bobPage.getByRole("button",{name:"Add another feedback item",exact:true}).click();
+  await bobPage.getByLabel("Reference",{exact:true}).selectOption("timestamp");
+  await bobPage.getByLabel("Timestamp",{exact:true}).fill("0:00.000");
+  await bobPage.getByLabel("Review feedback",{exact:true}).fill("Confirm the robot label at this timestamp.");
+  await bobPage.getByRole("button",{name:"Add another feedback item",exact:true}).click();
+  await bobPage.getByLabel("Reference",{exact:true}).selectOption("general");
   await bobPage.getByLabel("Review feedback",{exact:true}).fill("Everything else looks good.");
-  await bobPage.getByRole("button",{name:"Add comment",exact:true}).click();
   await bobPage.screenshot({path:"/tmp/mcap-focused-review-feedback.png",fullPage:true});
-  await bobPage.getByRole("button",{name:"Request Changes",exact:true}).click();
-  await bobPage.locator(".workflow-current-status").getByText("Changes requested",{exact:true}).waitFor();
+  await bobPage.getByRole("button",{name:"Submit feedback",exact:true}).click();
+  await bobPage.locator(".workflow-current-status").getByText("Feedback received",{exact:true}).waitFor();
   task=(await call(reviewer,`${base}/tasks`)).find((value)=>value.id===task.id);
+  assert.equal(task.latest_revision.comments[0].scope.start_frame,1);
+  assert.match(task.latest_revision.comments[1].message,/^@ 0:00.000/);
   assert.equal(task.latest_revision.comments.length,3);assert.equal(task.latest_revision.comments.filter((comment)=>comment.scope===null).length,1);
   await bobPage.getByRole("button",{name:"Back to reviews",exact:true}).click();
   await bobPage.getByLabel("Review queue filter",{exact:true}).selectOption("changes_requested");
@@ -174,7 +184,10 @@ try {
   await bobPage.locator(".review-queue-table").getByRole("button",{name:"Open review",exact:true}).click();
 
   await alicePage.getByRole("button",{name:"Refresh status",exact:true}).click();
-  await alicePage.locator(".workflow-current-status").getByText("Changes requested",{exact:true}).waitFor();
+  await alicePage.locator(".workflow-current-status").getByText("Feedback received",{exact:true}).waitFor();
+  await alicePage.getByRole("button",{name:/^Notifications/}).click();
+  await alicePage.getByRole("region",{name:"Notifications",exact:true}).getByRole("button",{name:"Open feedback",exact:true}).waitFor();
+  await alicePage.keyboard.press("Escape");
   await alicePage.getByLabel("Frame number",{exact:true}).fill("2");await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();
   await alicePage.getByRole("button",{name:"Save and submit revision 2",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Ready for review",{exact:true}).waitFor();
@@ -189,7 +202,7 @@ try {
   const annotationPath=`${project.path}/annotations/${recording.uuid}/metadata.json`,annotationBefore=(await stat(annotationPath)).mtimeMs;
   // No Start/Play/Next step: one decision automatically records the required
   // start transition, then approves the complete submitted revision.
-  await bobPage.getByRole("button",{name:"Approve Revision",exact:true}).click();
+  await bobPage.getByRole("button",{name:"Approve revision",exact:true}).click();
   await bobPage.locator(".workflow-current-status").getByText("Approved",{exact:true}).waitFor();
   task=(await call(reviewer,`${base}/tasks`)).find((value)=>value.id===task.id);
   assert.ok(task.latest_revision.review_started_at);assert.equal(task.status,"approved");
@@ -200,7 +213,7 @@ try {
   await bobPage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await bobPage.getByRole("button",{name:"Open revision 1",exact:true}).click();
   await bobPage.locator('.review-player[data-revision="1"]').waitFor();
-  assert.equal(await bobPage.getByRole("button",{name:"Approve Revision",exact:true}).count(),0);
+  assert.equal(await bobPage.getByRole("button",{name:"Approve revision",exact:true}).count(),0);
   await bobPage.locator(".review-actions").getByRole("button",{name:`Frame 2 · Channel ${channel}`,exact:true}).click();
   await bobPage.waitForFunction(()=>document.querySelector('[aria-label="Review frame number"]').value==="2");
   await bobPage.getByRole("button",{name:"Open current revision 2",exact:true}).click();
@@ -208,15 +221,15 @@ try {
   await bobPage.getByRole("button",{name:"Back to reviews",exact:true}).click();
   await bobPage.getByLabel("Review queue filter",{exact:true}).selectOption("approved");
   await bobPage.locator(".review-queue-table tbody tr").waitFor();assert.equal(await bobPage.locator(".review-queue-table tbody tr").count(),1);
-  await nav(bobPage,"MCAPs").click();await statusLink(bobPage,"Approved").waitFor();
+  await nav(bobPage,"Recordings").click();await statusLink(bobPage,"Approved").waitFor();
   assert.equal(await bobPage.locator(".mcap-review-bar,.working-copy-assignment").count(),0);
 
-  await nav(adminPage,"Datasets").click();await adminPage.getByRole("button",{name:"Approved data",exact:true}).click();
+  await nav(adminPage,"Datasets").click();await adminPage.getByRole("button",{name:"Choose recordings",exact:true}).click();
+  await adminPage.getByText("Choose exact approved revisions and filter labels or modalities",{exact:true}).click();
   await adminPage.getByRole("button",{name:"Select matching revisions",exact:true}).click();
-  await adminPage.getByRole("button",{name:"Create dataset from selected revisions",exact:true}).click();
   await adminPage.getByLabel("Dataset name",{exact:true}).fill("Robot training");
   const inputs=adminPage.locator("fieldset").filter({has:adminPage.locator("legend").filter({hasText:"Input modalities"})});
-  await inputs.getByRole("checkbox",{name:/Joint states|Sensor messages/}).check();
+  await inputs.getByRole("checkbox",{name:/Joint states|Sensor messages/}).first().check();
   await adminPage.getByRole("button",{name:"Create dataset version",exact:true}).click();
   await adminPage.getByRole("heading",{name:"Robot training · Version 1",exact:true}).waitFor();
   await adminPage.getByRole("button",{name:"Build CSV",exact:true}).click();await adminPage.getByText(/Version 1 CSV ready:/).waitFor();
@@ -225,13 +238,13 @@ try {
   await alicePage.getByRole("checkbox",{name:"robot",exact:true}).uncheck();await alicePage.getByRole("button",{name:"Save and submit revision 3",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Ready for review",{exact:true}).waitFor();
   assert.deepEqual(await call(admin,`${base}/datasets/${dataset.uuid}/versions/1`),version1);
-  await nav(alicePage,"MCAPs").click();await statusLink(alicePage,"Ready for review").click();
+  await nav(alicePage,"Recordings").click();await statusLink(alicePage,"Ready for review").click();
   await alicePage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await alicePage.getByRole("button",{name:"Open revision 1",exact:true}).click();
   await alicePage.locator('.review-player[data-revision="1"]').waitFor();
-  assert.equal(await alicePage.getByRole("button",{name:"Approve Revision",exact:true}).count(),0);
+  assert.equal(await alicePage.getByRole("button",{name:"Approve revision",exact:true}).count(),0);
 
-  await nav(adminPage,"MCAPs").click();await statusLink(adminPage,"Ready for review").click();
+  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").click();
   await adminPage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await adminPage.getByText("Working-copy assignment",{exact:true}).click();
   await workingCopy.getByRole("button",{name:"Change annotator",exact:true}).click();
@@ -243,7 +256,7 @@ try {
   await adminPage.evaluate(()=>window.dispatchEvent(new Event("focus")));
   await adminPage.getByRole("button",{name:"Account menu for Jean-Luc DeRieux",exact:true}).waitFor();
   assert.equal((await call(admin,"/accounts/settings")).independent_reviewer,true);
-  await nav(adminPage,"MCAPs").click();await statusLink(adminPage,"Ready for review").click();
+  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").click();
   assert.equal(await adminPage.getByText(/turn off.*reviewer/i).count(),0);
   assert.equal(await adminPage.getByText("Working-copy assignment",{exact:true}).isVisible(),false,"Assignment management is tucked into History");
   await chooseSelf(adminPage,"Jean Luc Derieux","Jean-Luc DeRieux");
@@ -252,9 +265,9 @@ try {
   assert.equal(selfAssigned.latest_revision.self_review,true);
   assert.equal(selfAssigned.latest_revision.reviewer_id,selfAssigned.latest_revision.submitted_by_id);
   assert.equal((await call(admin,"/accounts/settings")).independent_reviewer,true);
-  await adminPage.getByRole("button",{name:"Approve Revision",exact:true}).waitFor();
+  await adminPage.getByRole("button",{name:"Approve revision",exact:true}).waitFor();
   await adminPage.screenshot({path:"/tmp/mcap-simple-own-review.png",fullPage:true});
-  await adminPage.getByRole("button",{name:"Approve Revision",exact:true}).click();await adminPage.locator(".workflow-current-status").getByText("Approved",{exact:true}).waitFor();
+  await adminPage.getByRole("button",{name:"Approve revision",exact:true}).click();await adminPage.locator(".workflow-current-status").getByText("Approved",{exact:true}).waitFor();
   assert.deepEqual(await call(admin,`${base}/datasets/${dataset.uuid}/versions/1`),version1);
   await adminPage.setViewportSize({width:390,height:844});await adminPage.waitForFunction(()=>document.querySelector(".sidebar").getBoundingClientRect().right<=1);
   await adminPage.locator('.review-player[data-revision="4"]').waitFor();
