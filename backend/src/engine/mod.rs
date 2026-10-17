@@ -17,7 +17,7 @@ pub use translation_files::{translation_channels, translation_file_script, trans
 
 use decoder::Decoder;
 use images::{decode_image, is_camera};
-pub use index::{build_index, build_index_and_hash};
+pub use index::{build_index, build_index_and_hash, image_cache_needs_upgrade};
 pub use processing::process_recording;
 use reader::stream_messages;
 pub use translation::translate_record;

@@ -406,12 +406,20 @@ impl Store {
             let relative = format!("data/cache/{id}/{recording_id}");
             contained_path(&self.workspace, &relative)?
         };
-        if !cache.join("frames/index.json").is_file() {
+        let index_path = cache.join("frames/index.json");
+        let needs_index = || -> Result<bool> {
+            if !index_path.is_file() {
+                return Ok(true);
+            }
+            let index = self.shared_json(&index_path)?;
+            Ok(crate::engine::image_cache_needs_upgrade(&index))
+        };
+        if needs_index()? {
             let _guard = self
                 .cache_gate
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Frame cache unavailable"))?;
-            if !cache.join("frames/index.json").is_file() {
+            if needs_index()? {
                 fs::create_dir_all(&cache)?;
                 crate::engine::build_index(&path, &cache, field(&item, "sha256")?)?;
             }

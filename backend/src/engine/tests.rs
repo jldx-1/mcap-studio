@@ -10,6 +10,20 @@ use std::{
 use super::*;
 
 #[test]
+fn old_raw_format_failures_are_retried_once_without_rebuilding_other_caches() {
+    let mut index = json!({"topics":{"1":{"errors":["At 100: Unsupported raw image encoding mono14; use RGB"]}}});
+    assert!(image_cache_needs_upgrade(&index));
+    index["image_decoder_version"] = json!(2);
+    assert!(!image_cache_needs_upgrade(&index));
+    assert!(!image_cache_needs_upgrade(
+        &json!({"topics":{"1":{"errors":[]}}})
+    ));
+    assert!(!image_cache_needs_upgrade(
+        &json!({"topics":{"1":{"errors":["Compressed video (h264) is not supported"]}}})
+    ));
+}
+
+#[test]
 fn translation_fingerprint_matches_legacy_canonical_descriptor_order() {
     use prost::Message;
     use sha2::{Digest, Sha256};
@@ -224,6 +238,134 @@ fn raw_images_respect_stride_color_order_and_endian() {
     assert!(decode_image(&json!({"format":"h264","data":[]})).is_err());
 }
 
+#[test]
+fn sub16_mono_previews_and_training_tensors_use_the_recorded_bit_depth() {
+    let directory = tempfile::tempdir().unwrap();
+    for (encoding, bits) in [("mono10", 10), ("mono_12", 12), ("MONO14", 14)] {
+        for big_endian in [false, true] {
+            let maximum = (1u16 << bits) - 1;
+            let values = [0u16, maximum / 2, maximum, maximum / 4];
+            let mut data = Vec::new();
+            for row in values.chunks_exact(2) {
+                for value in row {
+                    data.extend(if big_endian {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    });
+                }
+                data.extend([255, 255]);
+            }
+            let record = json!({"width":2,"height":2,"encoding":encoding,
+                "is_bigendian":big_endian,"step":6,"data":data});
+            let image = decode_image(&record).unwrap().to_rgb8();
+            assert_eq!(
+                image.into_raw(),
+                [0, 0, 0, 127, 127, 127, 255, 255, 255, 63, 63, 63]
+            );
+            let preview = directory.path().join("preview.png");
+            assert!(super::training_images::preserve_native(&record, &preview, false).unwrap());
+            let output = directory.path().join("tensor.npy");
+            let metadata = super::write_training_tensor(&preview, &output, false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(metadata["dtype"], "<u2");
+            assert_eq!(metadata["shape"], json!([2, 2]));
+            assert_eq!(metadata["scale"], maximum as f64);
+            let bytes = fs::read(&output).unwrap();
+            let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+            assert_eq!(
+                bytes[10 + header_len..],
+                values
+                    .into_iter()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>()
+            );
+            let mut invalid = record.clone();
+            invalid["step"] = json!(3);
+            assert!(decode_image(&invalid).is_err());
+            invalid = record;
+            invalid["data"].as_array_mut().unwrap().pop();
+            assert!(decode_image(&invalid).is_err());
+        }
+    }
+}
+
+#[test]
+fn additional_color_layouts_preserve_channels_and_ignore_alpha_for_scaling() {
+    for (encoding, values) in [
+        ("FP32C4", [0.25, 0.5, 0.75, 255.0]),
+        ("bgra32f", [0.25, 0.5, 0.75, 255.0]),
+        ("rgba32f", [0.75, 0.5, 0.25, 255.0]),
+    ] {
+        for big_endian in [false, true] {
+            let record = float_image_record(encoding, 1, 1, &values, big_endian, 3);
+            assert_eq!(
+                decode_image(&record).unwrap().to_rgb8().into_raw(),
+                [191, 127, 63]
+            );
+            let directory = tempfile::tempdir().unwrap();
+            let preview = directory.path().join("preview.png");
+            super::training_images::preserve_native(&record, &preview, false).unwrap();
+            let output = directory.path().join("tensor.npy");
+            let metadata = super::write_training_tensor(&preview, &output, false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(metadata["shape"], json!([1, 1, 4]));
+            let bytes = fs::read(&output).unwrap();
+            let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+            assert_eq!(
+                bytes[10 + header_len..],
+                [0.75f32, 0.5, 0.25, 255.0]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    for encoding in ["16UC3", "16UC4"] {
+        let channels = if encoding.ends_with('4') { 4 } else { 3 };
+        let data: Vec<_> = [0u16, 32768, 65535, 0][..channels]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        assert_eq!(
+            decode_image(&json!({"width":1,"height":1,"encoding":encoding,"data":data}))
+                .unwrap()
+                .to_rgb8()
+                .into_raw(),
+            [255, 127, 0]
+        );
+    }
+    for encoding in ["FP64C1", "FP64C3", "FP64C4", "rgb64f", "rgba64f"] {
+        let values: &[f64] = match encoding {
+            "FP64C1" => &[0.5],
+            "FP64C3" => &[0.25, 0.5, 0.75],
+            "FP64C4" => &[0.25, 0.5, 0.75, 255.0],
+            "rgb64f" => &[0.75, 0.5, 0.25],
+            _ => &[0.75, 0.5, 0.25, 255.0],
+        };
+        for big_endian in [false, true] {
+            let data: Vec<_> = values
+                .iter()
+                .flat_map(|v| {
+                    if big_endian {
+                        v.to_be_bytes()
+                    } else {
+                        v.to_le_bytes()
+                    }
+                })
+                .collect();
+            let expected = if encoding == "FP64C1" {
+                [127; 3]
+            } else {
+                [191, 127, 63]
+            };
+            assert_eq!(decode_image(&json!({"width":1,"height":1,"encoding":encoding,"is_bigendian":big_endian,"data":data})).unwrap().to_rgb8().into_raw(), expected);
+        }
+    }
+}
+
 fn float_image_record(
     encoding: &str,
     width: usize,
@@ -252,7 +394,7 @@ fn float_image_record(
 #[test]
 fn normalized_float_previews_keep_intensities_color_order_stride_and_endianness() {
     for big_endian in [false, true] {
-        for encoding in ["32FC1", "32fc1", "mono32f"] {
+        for encoding in ["32FC1", "32fc1", "FP32C1", "fp32c1", "mono32f"] {
             let image = decode_image(&float_image_record(
                 encoding,
                 2,
@@ -268,7 +410,7 @@ fn normalized_float_previews_keep_intensities_color_order_stride_and_endianness(
                 [63, 63, 63, 127, 127, 127, 191, 191, 191, 127, 127, 127]
             );
         }
-        for encoding in ["32FC3", "32fc3", "bgr32f", "rgb32f"] {
+        for encoding in ["32FC3", "32fc3", "FP32C3", "fp32c3", "bgr32f", "rgb32f"] {
             let values = if encoding == "rgb32f" {
                 [0.75, 0.5, 0.25, 0.0, 0.5, 1.0]
             } else {
@@ -297,8 +439,8 @@ fn float_previews_scale_all_channels_together_and_ignore_nonfinite_samples() {
     .unwrap()
     .to_rgb8();
     assert_eq!(color.into_raw(), [0, 255, 170, 212, 127, 85]);
-    for encoding in ["32FC1", "32FC3"] {
-        let channels = if encoding == "32FC1" { 1 } else { 3 };
+    for encoding in ["32FC1", "32FC3", "FP32C1", "FP32C3"] {
+        let channels = if encoding.ends_with("C1") { 1 } else { 3 };
         for (values, expected) in [
             (vec![0.5; channels * 2], vec![127; 6]),
             (vec![42.0; channels * 2], vec![0; 6]),
@@ -320,8 +462,8 @@ fn float_previews_scale_all_channels_together_and_ignore_nonfinite_samples() {
 
 #[test]
 fn float_previews_reject_short_payloads_and_short_strides() {
-    for encoding in ["32FC1", "32FC3"] {
-        let channels = if encoding == "32FC1" { 1 } else { 3 };
+    for encoding in ["32FC1", "32FC3", "FP32C1", "FP32C3"] {
+        let channels = if encoding.ends_with("C1") { 1 } else { 3 };
         let record = float_image_record(encoding, 1, 1, &vec![0.5; channels], false, 0);
         let mut short_stride = record.clone();
         short_stride["step"] = json!(channels * 4 - 1);
@@ -337,13 +479,13 @@ fn float_camera_streams_build_playback_previews_and_preserve_training_tensors() 
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("float-cameras.mcap");
     let mut writer = mcap::Writer::new(File::create(&source).unwrap()).unwrap();
-    let encodings = ["32FC1", "32FC3", "rgb32f", "bgr32f"];
+    let encodings = ["32FC1", "32FC3", "FP32C1", "FP32C3", "rgb32f", "bgr32f"];
     for encoding in encodings {
         let channel = writer
             .add_channel(0, &format!("/camera/{encoding}"), "json", &BTreeMap::new())
             .unwrap();
         for (sequence, values) in [(0, [0.25, 0.5, 0.75]), (1, [-2.0, 0.0, 2.0])] {
-            let width = if encoding == "32FC1" { 3 } else { 1 };
+            let width = if encoding.ends_with("C1") { 3 } else { 1 };
             let record = float_image_record(encoding, width, 1, &values, true, 3);
             writer
                 .write_to_known_channel(
@@ -369,7 +511,7 @@ fn float_camera_streams_build_playback_previews_and_preserve_training_tensors() 
         assert_eq!(frames.len(), 2);
         for (number, frame) in frames.iter().enumerate() {
             let encoding = topic["image_encoding"].as_str().unwrap();
-            let mono = encoding == "32FC1";
+            let mono = encoding.ends_with("C1");
             let preview = directory
                 .path()
                 .join("frames")
@@ -380,7 +522,7 @@ fn float_camera_streams_build_playback_previews_and_preserve_training_tensors() 
             } else {
                 [0, 127, 255]
             };
-            let reverse = encoding == "32FC3" || encoding == "bgr32f";
+            let reverse = encoding == "32FC3" || encoding == "FP32C3" || encoding == "bgr32f";
             let expected_pixels: Vec<_> = if mono {
                 expected.into_iter().flat_map(|v| [v; 3]).collect()
             } else if reverse {

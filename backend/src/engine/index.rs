@@ -19,6 +19,24 @@ use super::{
     Decoder,
 };
 
+const IMAGE_DECODER_VERSION: u32 = 2;
+
+/// Retry old raw-format failures once when the decoder gains format support.
+pub fn image_cache_needs_upgrade(index: &Value) -> bool {
+    index["image_decoder_version"] != IMAGE_DECODER_VERSION
+        && index["topics"].as_object().is_some_and(|topics| {
+            topics.values().any(|topic| {
+                topic["errors"].as_array().is_some_and(|errors| {
+                    errors.iter().any(|error| {
+                        error
+                            .as_str()
+                            .is_some_and(|text| text.contains("Unsupported raw image encoding"))
+                    })
+                })
+            })
+        })
+}
+
 /// Build a legacy-compatible timestamped image/record cache in `cache_dir/frames`.
 pub fn build_index(recording: &Path, cache_dir: &Path, sha256: &str) -> Result<Value> {
     build_index_inner(recording, cache_dir, Some(sha256))
@@ -148,7 +166,7 @@ fn build_index_inner(recording: &Path, cache_dir: &Path, sha256: Option<&str>) -
         .map(str::to_owned)
         .or(calculated)
         .context("Missing recording digest")?;
-    let index = json!({"format_version": 1, "sha256": sha256, "topics": topics});
+    let index = json!({"format_version": 1, "image_decoder_version": IMAGE_DECODER_VERSION, "sha256": sha256, "topics": topics});
     let mut index_file = BufWriter::new(File::create(temporary.path().join("index.json"))?);
     serde_json::to_writer(&mut index_file, &index)?;
     index_file.flush()?;

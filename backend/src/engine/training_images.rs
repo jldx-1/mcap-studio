@@ -1,6 +1,6 @@
 //! Preserve original high precision camera values for training separately from
 //! RGB8 display previews. Tensor files use the standard NumPy .npy format.
-use super::images::payload_bytes;
+use super::images::{image_encoding, payload_bytes, RawFormat};
 use super::{decode_image, is_camera, stream_messages, Decoder};
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
@@ -17,17 +17,9 @@ pub(super) fn preserve_native_bytes(
     preview: &Path,
     depth: bool,
 ) -> Result<bool> {
-    let encoding = record["pixel_format"]
-        .as_str()
-        .or(record["encoding"].as_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let encoding = image_encoding(record);
     let png16 = data.starts_with(b"\x89PNG") && data.get(24) == Some(&16);
-    if !depth
-        && !png16
-        && !encoding.contains("16")
-        && !encoding.contains("32f")
-        && !encoding.contains("64f")
+    if !depth && !png16 && !RawFormat::parse(&encoding).is_ok_and(|format| format.sample_bytes > 1)
     {
         return Ok(false);
     }
@@ -135,7 +127,7 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         "metadata": crate::storage::fingerprint(&metadata_path)?,
         "source": crate::storage::fingerprint(&source_path)?,
         "depth": depth,
-        "builder_version": 1,
+        "builder_version": 2,
     });
     let reuse_path = output.with_extension("npy.json");
     if let Ok(saved) = crate::storage::read_json(&reuse_path) {
@@ -148,11 +140,7 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
     }
     let metadata: Value = serde_json::from_slice(&fs::read(&metadata_path)?)?;
     let source = fs::read(&source_path)?;
-    let encoding = metadata["pixel_format"]
-        .as_str()
-        .or(metadata["encoding"].as_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let encoding = image_encoding(&metadata);
     let (mut width, mut height) = (
         metadata["width"].as_u64().unwrap_or(0) as usize,
         metadata["height"].as_u64().unwrap_or(0) as usize,
@@ -187,23 +175,9 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
             )
         }
     } else {
-        let (descriptor, size) = if encoding.contains("64f") || encoding == "64fc1" {
-            ("<f8", 8)
-        } else if encoding.contains("32f") || encoding == "32fc1" {
-            ("<f4", 4)
-        } else if encoding.contains("8") {
-            ("|u1", 1)
-        } else {
-            ("<u2", 2)
-        };
-        let channels = if encoding.starts_with("rgba") || encoding.starts_with("bgra") {
-            4
-        } else if encoding.starts_with("rgb") || encoding.starts_with("bgr") || encoding == "32fc3"
-        {
-            3
-        } else {
-            1
-        };
+        let layout = RawFormat::parse(&encoding)?;
+        let (descriptor, size, channels) =
+            (layout.descriptor(), layout.sample_bytes, layout.channels);
         let stride = metadata["step"]
             .as_u64()
             .unwrap_or((width * channels * size) as u64) as usize;
@@ -220,7 +194,7 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         let big = metadata["is_bigendian"]
             .as_bool()
             .unwrap_or(metadata["is_bigendian"] == 1);
-        let reverse = encoding.starts_with("bgr") || encoding == "32fc3";
+        let reverse = layout.reverse;
         let row_bytes = width * channels * size;
         let mut bytes = Vec::with_capacity(width * height * channels * size);
         if !big && !reverse {
@@ -273,7 +247,14 @@ pub fn write_training_tensor(preview: &Path, output: &Path, depth: bool) -> Resu
         file.as_file().sync_all()?;
         file.persist(output).map_err(|e| e.error)?;
     }
-    let tensor = json!({"dtype":descriptor,"shape":if channels==1{vec![height,width]}else{vec![height,width,channels]},"scale":if depth||descriptor.starts_with("<f"){1.0}else if descriptor=="|u1"{255.0}else{65535.0},"units":if depth{"original recorded values"}else{"normalized intensity"}});
+    let intensity_scale = RawFormat::parse(&encoding).map_or(65535.0, |layout| {
+        if layout.sample_bytes == 2 {
+            layout.max_value as f64
+        } else {
+            65535.0
+        }
+    });
+    let tensor = json!({"dtype":descriptor,"shape":if channels==1{vec![height,width]}else{vec![height,width,channels]},"scale":if depth||descriptor.starts_with("<f"){1.0}else if descriptor=="|u1"{255.0}else{intensity_scale},"units":if depth{"original recorded values"}else{"normalized intensity"}});
     crate::storage::write_json(
         &reuse_path,
         &json!({

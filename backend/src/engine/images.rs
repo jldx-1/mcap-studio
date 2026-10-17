@@ -4,6 +4,74 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use image::{DynamicImage, RgbImage};
 use serde_json::Value;
 
+/// Raw formats share a layout between display conversion and lossless tensor export.
+#[derive(Clone, Copy)]
+pub(super) struct RawFormat {
+    pub channels: usize,
+    pub sample_bytes: usize,
+    pub reverse: bool,
+    pub float: bool,
+    pub max_value: u32,
+}
+
+pub(super) fn image_encoding(record: &Value) -> String {
+    record["pixel_format"]
+        .as_str()
+        .or_else(|| record["encoding"].as_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+impl RawFormat {
+    pub fn parse(encoding: &str) -> Result<Self> {
+        let (channels, sample_bytes, reverse, float, bits) = match encoding {
+            "rgb8" => (3, 1, false, false, 8),
+            "bgr8" | "8uc3" => (3, 1, true, false, 8),
+            "rgba8" => (4, 1, false, false, 8),
+            "bgra8" | "8uc4" => (4, 1, true, false, 8),
+            "rgb16" => (3, 2, false, false, 16),
+            "bgr16" | "16uc3" => (3, 2, true, false, 16),
+            "rgba16" => (4, 2, false, false, 16),
+            "bgra16" | "16uc4" => (4, 2, true, false, 16),
+            "mono8" | "mono_8" | "8uc1" => (1, 1, false, false, 8),
+            // Sub-16-bit mono samples are right-aligned in 16-bit containers.
+            "mono10" | "mono_10" => (1, 2, false, false, 10),
+            "mono12" | "mono_12" => (1, 2, false, false, 12),
+            "mono14" | "mono_14" => (1, 2, false, false, 14),
+            "mono16" | "mono_16" | "16uc1" => (1, 2, false, false, 16),
+            "32fc1" | "fp32c1" | "mono32f" => (1, 4, false, true, 0),
+            "32fc3" | "fp32c3" | "bgr32f" => (3, 4, true, true, 0),
+            "rgb32f" => (3, 4, false, true, 0),
+            "32fc4" | "fp32c4" | "bgra32f" => (4, 4, true, true, 0),
+            "rgba32f" => (4, 4, false, true, 0),
+            "64fc1" | "fp64c1" | "mono64f" => (1, 8, false, true, 0),
+            "64fc3" | "fp64c3" | "bgr64f" => (3, 8, true, true, 0),
+            "rgb64f" => (3, 8, false, true, 0),
+            "64fc4" | "fp64c4" | "bgra64f" => (4, 8, true, true, 0),
+            "rgba64f" => (4, 8, false, true, 0),
+            _ => bail!("Unsupported raw image encoding {encoding}; use RGB/BGR/RGBA/BGRA 8/16-bit or 32/64-bit float, mono8/10/12/14/16, or 32FC/FP32C and 64FC/FP64C with 1, 3, or 4 channels"),
+        };
+        Ok(Self {
+            channels,
+            sample_bytes,
+            reverse,
+            float,
+            max_value: (1u32 << bits) - 1,
+        })
+    }
+
+    pub fn descriptor(self) -> &'static str {
+        match (self.sample_bytes, self.float) {
+            (1, false) => "|u1",
+            (2, false) => "<u2",
+            (4, true) => "<f4",
+            (8, true) => "<f8",
+            _ => unreachable!(),
+        }
+    }
+}
+
 pub(super) fn payload_bytes(value: &Value) -> Result<Vec<u8>> {
     if let Some(encoded) = value
         .as_str()
@@ -48,25 +116,15 @@ pub(super) fn decode_image_bytes(record: &Value, bytes: &[u8]) -> Result<Dynamic
     let format = record["format"].as_str().unwrap_or("").to_ascii_lowercase();
     ensure!(!matches!(format.as_str(), "h264" | "h265" | "hevc" | "vp9" | "av1"),
         "Compressed video ({format}) is not supported by the native image decoder; import PNG/JPEG or raw images");
-    let encoding = record
-        .get("pixel_format")
-        .or_else(|| record.get("encoding"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let (channels, sample_bytes, reverse, float) = match encoding.as_str() {
-        "rgb8" => (3, 1, false, false), "bgr8" | "8uc3" => (3, 1, true, false),
-        "rgba8" => (4, 1, false, false), "bgra8" | "8uc4" => (4, 1, true, false),
-        "rgb16" => (3, 2, false, false), "bgr16" => (3, 2, true, false),
-        "rgba16" => (4, 2, false, false), "bgra16" => (4, 2, true, false),
-        "mono8" | "mono_8" | "8uc1" => (1, 1, false, false),
-        "mono16" | "mono_16" | "16uc1" => (1, 2, false, false),
-        "32fc1" | "mono32f" => (1, 4, false, true),
-        "32fc3" | "bgr32f" => (3, 4, true, true),
-        "rgb32f" => (3, 4, false, true),
-        "64fc1" | "mono64f" => (1, 8, false, true),
-        _ => bail!("Unsupported raw image encoding {encoding}; use RGB/BGR/RGBA/BGRA 8/16-bit, mono8/16, 32FC1/32FC3, rgb32f/bgr32f, or mono64f"),
-    };
+    let encoding = image_encoding(record);
+    let layout = RawFormat::parse(&encoding)?;
+    let RawFormat {
+        channels,
+        sample_bytes,
+        reverse,
+        float,
+        ..
+    } = layout;
     let width = record["width"]
         .as_u64()
         .context("Raw image width must be an integer")?;
@@ -163,6 +221,9 @@ pub(super) fn decode_image_bytes(record: &Value, bytes: &[u8]) -> Result<Dynamic
         // intensities. Row padding and non-finite samples do not affect it.
         for y in 0..height as usize {
             for sample in 0..width as usize * channels {
+                if channels == 4 && sample % channels == 3 {
+                    continue;
+                }
                 let value = read_sample(y * stride + sample * sample_bytes);
                 if value.is_finite() {
                     low = low.min(value);
@@ -196,7 +257,7 @@ pub(super) fn decode_image_bytes(record: &Value, bytes: &[u8]) -> Result<Dynamic
                         (value - low) * 255.0 / (high - low)
                     }
                 } else if sample_bytes == 2 {
-                    value / 257.0
+                    value * 255.0 / layout.max_value as f64
                 } else {
                     value
                 };
