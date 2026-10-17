@@ -3041,3 +3041,23 @@ button.mcap-review-status:hover { border-color: var(--blue-text); }
 @media (max-width: 640px) { .notification-panel { position: fixed; top: 68px; right: 14px; } .topbar-status { gap: 8px; } }
 
 .notification-running { position: absolute; bottom: 1px; right: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--primary, #4f46e5); box-shadow: 0 0 0 2px var(--surface); }
+
+.recording-upload-zone { display: flex; align-items: center; gap: 20px; padding: 28px; border: 1.5px dashed var(--line); border-radius: 12px; background: var(--surface); transition: border-color .15s, background .15s; }
+.recording-upload-zone.is-dragging { border-color: var(--primary, #4f46e5); background: var(--hover); }
+.recording-upload-zone > div { flex: 1; }
+.recording-upload-zone h2 { font-size: 16px; margin: 0 0 6px; }
+.recording-upload-zone p { color: var(--muted); font-size: 13px; margin: 0; }
+.recording-upload-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 12px; background: var(--hover); color: var(--primary, #4f46e5); flex-shrink: 0; }
+.recording-table-controls { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.recording-search { display: flex; align-items: center; gap: 8px; position: relative; flex: 1; min-width: 200px; max-width: 420px; }
+.recording-search > svg { position: absolute; left: 12px; color: var(--muted); }
+.recording-search > input { width: 100%; padding-left: 38px; }
+.recordings-table { width: 100%; min-width: 680px; }
+.recordings-table th { white-space: nowrap; }
+.recordings-table td { padding-top: 16px; padding-bottom: 16px; }
+.recording-name-button { display: flex; align-items: center; gap: 12px; border: 0; background: transparent; padding: 0; color: var(--text); text-align: left; cursor: pointer; }
+.recording-name-button > svg { color: var(--muted); flex-shrink: 0; }
+.recording-name-button strong { font-size: 13px; overflow-wrap: anywhere; }
+.recording-name-button small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
+.recording-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+@media (max-width: 680px) { .recording-upload-zone { padding: 20px; flex-wrap: wrap; gap: 14px; } .recording-upload-zone > .button { width: 100%; justify-content: center; } }

@@ -4,13 +4,13 @@ import type { Project, Recording } from "../../types/models";
 import type { Perform } from "../../types/workspace";
 
 interface Translation {id:string;name:string;script:string;source_message:string;source_schema_sha256:string;topic?:string;[key:string]:unknown}
-interface TranslationTopic {channel_id:string;topic:string;source_message:string;source_schema_sha256:string;choices:Translation[]}
+interface TranslationTopic {channel_id:string;topic:string;encoding?:string;source_message:string;source_schema_sha256:string;choices:Translation[]}
 interface Preview {source:unknown;translated:unknown}
 interface LiveOutput {channel:string;script:string;value:unknown}
 interface PreviewError {channel:string;script:string;message:string}
 
 export function useTopicTranslations({project,recording,busy,perform,enabled,onNotice}: {
-  project:Project;recording:Recording;busy:boolean;perform:Perform;
+  project:Project;recording:Pick<Recording,"uuid">;busy:boolean;perform:Perform;
   enabled:boolean;onNotice:(message:string)=>void;
 }) {
   const [topics,setTopics] = useState<TranslationTopic[]>([]);

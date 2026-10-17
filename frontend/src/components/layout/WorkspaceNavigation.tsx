@@ -34,11 +34,11 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
           {[
             { value: "project", label: "Overview", icon: FolderOpen },
             { value: "mcaps", label: "Recordings", icon: Layers3,permission:"mcap.view" },
-            { value: "labels", label: "Labels", icon: Tag,permission:"labels.manage" },
+            { value: "labels", label: "Labels & Translations", icon: Tag,permission:"labels.manage" },
             { value:"reviews",label:"Reviews",icon:ClipboardCheck,permission:"review.view" },
             { value: "datasets", label: "Datasets", icon: Database },
             { value:"members",label:"Members",icon:Users,permission:"project.manage" },
-          ].filter((item) => !item.permission || can(project,user,item.permission) || (item.value==="reviews"&&can(project,user,"annotation.view"))).map((item) => (
+          ].filter((item) => !item.permission || can(project,user,item.permission) || (item.value==="labels"&&can(project,user,"project.manage")) || (item.value==="reviews"&&can(project,user,"annotation.view"))).map((item) => (
             <button key={item.value} className={`nav-item ${page === item.value || (item.value === "reviews" && page === "review") || (item.value === "mcaps" && ["topics", "labeling", "structured", "pipeline", "prepare"].includes(page)) ? "active" : ""}`}
               disabled={!!busy} onClick={() => { if (item.value === "datasets") setDatasetStart("load"); void go(item.value as Page); }}>
               <item.icon size={19} /><span>{item.label}</span>
@@ -47,7 +47,7 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
         </nav>
         <div className="sidebar-project-actions">
           {uploadButton}
-          {can(project,user,"datasets.generate") && <button className="button secondary" disabled={!!busy} onClick={() => openDialog("dataset")}><Database size={17} /> Create dataset</button>}
+          {page!=="mcaps"&&can(project,user,"datasets.generate") && <button className="button secondary" disabled={!!busy} onClick={() => openDialog("dataset")}><Database size={17} /> Create dataset</button>}
           <button className="text-button" disabled={!!busy} onClick={() => void go("projects")}><ArrowLeft size={15} /> All projects</button>
         </div>
       </>

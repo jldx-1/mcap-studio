@@ -46,7 +46,7 @@ workspace: Pick<WorkspaceController,
       : page === "mcaps"
         ? "Recordings"
         : page === "labels"
-          ? "Project labels"
+          ? "Labels & Translations"
           : page === "datasets"
             ? "Project datasets"
             : page === "prepare" ? "Prepare recordings" : page === "pipeline"
@@ -61,7 +61,7 @@ workspace: Pick<WorkspaceController,
       : page === "mcaps"
         ? "Browse recordings by import date and open their topic tables."
         : page === "labels"
-          ? "Create label lists and manage the labels inside each group."
+          ? "Manage reusable label lists and translation scripts for your recordings."
           : page === "topics"
             ? "Choose a labeling format and label list, then create or edit labels beside a topic."
             : page === "structured"
@@ -81,7 +81,7 @@ workspace: Pick<WorkspaceController,
             : page === "structured"
               ? "STRUCTURED DATA"
               : page === "labels"
-                ? "LABEL LISTS"
+                ? "LABELS & TRANSLATIONS"
                 : page === "labeling"
                   ? "TOPIC LABELING"
                   : page === "datasets"
@@ -113,7 +113,7 @@ workspace: Pick<WorkspaceController,
           </button>
         </>
       )}
-      {(page === "project" || page === "mcaps") && (
+      {page === "project" && (
         <>
           {can(project,user,"datasets.generate") && <button
             className="button secondary"

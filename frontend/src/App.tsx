@@ -2,7 +2,7 @@ import { CheckCircle2, LoaderCircle, Upload, X } from "lucide-react";
 import Editor from "./components/annotations/AnnotationEditor";
 import StructuredEditor from "./components/annotations/StructuredEditor";
 import { DatasetWorkspace } from "./components/datasets/DatasetWorkspace";
-import { Labels } from "./components/labels/Labels";
+import { LabelsTranslationsPage } from "./pages/LabelsTranslationsPage";
 import { WorkspaceHeading } from "./components/layout/WorkspaceHeading";
 import { WorkspaceSidebar, WorkspaceTopbar } from "./components/layout/WorkspaceNavigation";
 import { TopicTable } from "./components/mcaps/TopicTable";
@@ -144,15 +144,14 @@ function Workspace() {
           {project && page === "project" && (
             <ProjectOverview project={project} busy={!!busy} onOpen={(value) => { if (value === "datasets") setDatasetStart("load"); void go(value); }} />
           )}
-          {project && page === "labels" && can(project,auth.user,"labels.manage") && (
-            <Labels project={project} busy={!!busy} perform={perform} onProject={updateProject} onNotice={setNotice} />
+          {project && page === "labels" && (can(project,auth.user,"labels.manage")||can(project,auth.user,"project.manage")) && (
+            <LabelsTranslationsPage key={project.uuid} project={project} workspace={workspace} />
           )}
           {project && page === "mcaps" && <McapsPage workspace={workspace} uploadButton={uploadButton} />}
           {project && recording && page === "topics" && (
             <TopicTable
               key={recording.uuid}
-              onApply={workspace.applyTranslations}
-              onNotice={setNotice}
+              onManageTranslations={()=>void go("labels")}
               project={project}
               recording={recording}
               busy={!!busy}

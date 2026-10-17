@@ -26,12 +26,12 @@ export function ProjectOverview({ project, busy, onOpen }: { project: Project; b
           <span>{modalities.length ? modalities.join(" · ") : "No indexed modalities yet"}</span>
           <span className="hub-link">View MCAPs <ArrowRight size={16} /></span>
         </button>
-        <button className="panel hub-card" disabled={busy || !can(project,user,"labels.manage")} onClick={() => onOpen("labels")}>
-          <Tag size={24} /><h2>Project Labels</h2>
+        <button className="panel hub-card" disabled={busy || (!can(project,user,"labels.manage")&&!can(project,user,"project.manage"))} onClick={() => onOpen("labels")}>
+          <Tag size={24} /><h2>Labels &amp; Translations</h2>
           <p>{project.label_lists.length.toLocaleString()} label lists · {labelMemberships.size.toLocaleString()} individual labels</p>
           <span>{populatedLists.toLocaleString()} populated lists · {(project.label_lists.length - populatedLists).toLocaleString()} empty lists</span>
           <span>{sharedLabels.toLocaleString()} labels shared across multiple lists</span>
-          <span className="hub-link">Manage labels <ArrowRight size={16} /></span>
+          <span className="hub-link">Manage labels &amp; translations <ArrowRight size={16} /></span>
         </button>
         <button className="panel hub-card" disabled={busy} onClick={() => onOpen("datasets")}>
           <Database size={24} /><h2>Project Datasets</h2><p>Saved datasets</p>

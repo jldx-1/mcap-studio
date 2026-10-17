@@ -1,5 +1,3 @@
-import { Fragment } from "react";
-import { useTopicTranslations } from "../processing/TopicTranslations";
 import { useAuth } from "../../state/AuthContext";
 import { can } from "../../utils/permissions";
 import { Pencil } from "lucide-react";
@@ -20,8 +18,7 @@ export function TopicTable({
   perform,
   onRecording,
   onEdit,
-  onApply,
-  onNotice,
+  onManageTranslations,
 }: {
   project: Project;
   recording: Recording;
@@ -29,12 +26,10 @@ export function TopicTable({
   perform: Perform;
   onRecording: (recording: Recording) => void;
   onEdit: (channel: string) => void;
-  onApply: (selections: Record<string,string>) => Promise<void>;
-  onNotice: (message: string) => void;
+  onManageTranslations: () => void;
 }) {
   const { user } = useAuth();
   const translate = can(project,user,"project.manage");
-  const translations = useTopicTranslations({project,recording,busy,perform,enabled:translate,onNotice});
   const editable = can(project,user,"annotation.edit");
   const annotator = editable || can(project,user,"annotation.create");
   const update = (channel: string, kind: "format" | "list", value: string) =>
@@ -82,7 +77,6 @@ export function TopicTable({
           <thead>
             <tr>
               <th>Topic</th>
-              {translate && <th>Translation script</th>}
               <th>Labeling format</th>
               <th>Label list</th>
               <th>Annotations</th>
@@ -98,11 +92,8 @@ export function TopicTable({
               const actionLabel = !annotator && topic.kind === "image" ? "View annotations" : topic.kind !== "image" ? "Open CSV Workspace" : counts.annotated || counts.reviewed ? "Edit Labels" : "Create Labels";
               const saved = recording.annotations.techniques[id];
               const technique = topic.kind === "image" ? (saved === "classification" ? "classification" : "yolo") : "csv";
-              const translationTopic = translations.topics.find(item => item.channel_id === id);
-              const expanded = translations.editing && translations.channel === id;
               return (
-                <Fragment key={id}>
-                <tr>
+                <tr key={id}>
                   <td>
                     <strong className="topic-name">{topic.topic}</strong>
                     <span className="table-secondary">
@@ -118,25 +109,6 @@ export function TopicTable({
                       </span>
                     )}
                   </td>
-                  {translate && <td>
-                    <div className="topic-translation-cell">
-                      <select
-                        aria-label={`Saved translation for ${topic.topic}`}
-                        value={translations.selected[id] || ""}
-                        disabled={busy || translations.loading || !translationTopic}
-                        onChange={event => translations.setSelected(current => ({...current,[id]:event.target.value}))}
-                      >
-                        <option value="">No translation</option>
-                        {translationTopic?.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
-                      </select>
-                      <button className="text-button" disabled={busy || translations.loading || !translationTopic}
-                        aria-label={`Edit translation for ${topic.topic}`}
-                        aria-expanded={expanded}
-                        aria-controls={expanded ? `translation-editor-${id}` : undefined}
-                        onClick={() => {if(translationTopic)translations.edit(translationTopic);}}
-                      >{translations.selected[id] ? "Inspect or edit" : "Create or load"}</button>
-                    </div>
-                  </td>}
                   <td>
                     <select
                       aria-label={`Labeling format for ${topic.topic}`}
@@ -198,23 +170,13 @@ export function TopicTable({
                     </button>
                   </td>
                 </tr>
-                {translate && expanded && <tr className="topic-translation-editor-row">
-                  <td colSpan={7} id={`translation-editor-${id}`}>{translations.editor}</td>
-                </tr>}
-                </Fragment>
+
               );
             })}
           </tbody>
         </table>
       </div>
-      {translate && <div className="collection-body feature-stack">
-        {translations.error && !translations.editing && <p className="inline-error" role="alert">{translations.error}</p>}
-        {translations.loading && <p className="field-help" role="status">Finding matching translations…</p>}
-        <div className="button-row">
-          <button className="button primary small" disabled={busy || translations.loading || !Object.keys(translations.selections).length} onClick={() => void onApply(translations.selections)}>Apply selected translations</button>
-          <span className="field-help">Presets match each topic’s message type and schema. Applying scripts creates a processed MCAP and opens its topic table.</span>
-        </div>
-      </div>}
+      {translate&&<div className="collection-body"><button className="button secondary small" disabled={busy} onClick={onManageTranslations}>Manage labels &amp; translations</button></div>}
       {!recording.topics.length && (
         <p className="collection-body muted">This MCAP has no topics.</p>
       )}
