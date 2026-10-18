@@ -10,15 +10,21 @@ use std::{
 use super::*;
 
 #[test]
-fn old_raw_format_failures_are_retried_once_without_rebuilding_other_caches() {
+fn old_camera_format_failures_are_retried_once_without_rebuilding_other_caches() {
     let mut index = json!({"topics":{"1":{"errors":["At 100: Unsupported raw image encoding mono14; use RGB"]}}});
     assert!(image_cache_needs_upgrade(&index));
-    index["image_decoder_version"] = json!(2);
+    index["image_decoder_version"] = json!(3);
     assert!(!image_cache_needs_upgrade(&index));
     assert!(!image_cache_needs_upgrade(
         &json!({"topics":{"1":{"errors":[]}}})
     ));
+    assert!(image_cache_needs_upgrade(
+        &json!({"image_decoder_version":2,"topics":{"1":{"errors":["At 100: Unsupported message encoding video/jpeg; native decoding supports JSON and Protobuf"]}}})
+    ));
     assert!(!image_cache_needs_upgrade(
+        &json!({"image_decoder_version":2,"topics":{"1":{"errors":["Unsupported message encoding custom"]}}})
+    ));
+    assert!(image_cache_needs_upgrade(
         &json!({"topics":{"1":{"errors":["Compressed video (h264) is not supported"]}}})
     ));
 }
