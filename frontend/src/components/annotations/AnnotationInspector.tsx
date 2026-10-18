@@ -1,15 +1,16 @@
-import { CheckCircle2, Flag, ScanLine, Square, Trash2 } from "lucide-react";
+import { Flag, ScanLine, Square, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Tracks } from "../../annotations/state";
 import { colors, rebuildTrack, trackInfo } from "../../annotations/state";
 import type { AnnotationEditorController } from "../../hooks/useAnnotationEditor";
 
-export function AnnotationInspector({ editor }: {  
+export function AnnotationInspector({ editor, classes }: {
+classes: ReactNode;
 editor: Pick<AnnotationEditorController,
     | "state"
     | "frameNumber"
     | "selected"
     | "setSelected"
-    | "classId"
     | "setClassId"
     | "setTool"
     | "setDirty"
@@ -23,7 +24,6 @@ editor: Pick<AnnotationEditorController,
     | "boxTool"
     | "selectedBox"
     | "track"
-    | "assignedLabelList"
     | "availableClasses"
     | "commit"
     | "updateRow"
@@ -38,7 +38,6 @@ editor: Pick<AnnotationEditorController,
     frameNumber,
     selected,
     setSelected,
-    classId,
     setClassId,
     setTool,
     setDirty,
@@ -52,7 +51,6 @@ editor: Pick<AnnotationEditorController,
     boxTool,
     selectedBox,
     track,
-    assignedLabelList,
     availableClasses,
     commit,
     updateRow,
@@ -61,6 +59,20 @@ editor: Pick<AnnotationEditorController,
     onError,
     onNotice
   } = editor;
+  const finishedTracks=Object.entries((state.tracks as Tracks|undefined)?.[channel]||{}).filter(([,info])=>info.end!==null);
+  const continueTrack=(id:number)=>{
+    let selectedIndex:number|null=null;
+    commit(next=>{
+      const info=trackInfo(next,channel,id);
+      if(!info)return;
+      info.end=null;
+      rebuildTrack(next,channel,id,info,frames);
+      const index=next.annotations[channel]?.[frameNumber]?.boxes.findIndex(box=>box.track_id===id)??-1;
+      if(index>=0){selectedIndex=index;setClassId(next.annotations[channel][frameNumber].boxes[index].class_id);}
+    });
+    setSelected(selectedIndex);setTool("select");
+    onNotice(`Track #${id} continues from its last keyframe.`);
+  };
   return (<aside className="annotation-sidebar">
     <div className="annotation-settings">
       <label>
@@ -81,36 +93,8 @@ editor: Pick<AnnotationEditorController,
           <option value="classification">Video classification</option>
         </select>
       </label>
-      <div className="assigned-label-list">
-        <span>Label list</span>
-        <strong>{assignedLabelList?.name || "No list assigned"}</strong>
-        {!assignedLabelList && <p className="field-help">Choose a label list in the data labeling table before adding labels.</p>}
-      </div>
-      {boxTool && (
-        <label>
-          Active class
-          <select
-            aria-label="Active annotation class"
-            value={classId}
-            onChange={(event) => {
-              const id = Number(event.target.value);
-              setClassId(id);
-              if (selectedBox) editSelected({ class_id: id });
-            }}
-          >
-            {availableClasses.length ? (
-              availableClasses.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))
-            ) : (
-              <option value="0">Choose a list in the data labeling table</option>
-            )}
-          </select>
-        </label>
-      )}
     </div>
+    {classes}
     <div className="annotation-list-heading">
       <h3>{boxTool ? "Annotations" : "Frame classes"}</h3>
       <span className="pill">
@@ -159,7 +143,7 @@ editor: Pick<AnnotationEditorController,
             <p>
               {availableClasses.length
                 ? "Draw your first box on the frame."
-                : "Choose a list in the data labeling table, then add classes to that list to start drawing."}
+                : "Add a class above to start drawing."}
             </p>
           </div>
         )}
@@ -231,29 +215,7 @@ editor: Pick<AnnotationEditorController,
               >
                 <Flag size={14} /> End here
               </button>
-              <button
-                className="button secondary small"
-                onClick={() =>
-                  commit((next) => {
-                    const info = trackInfo(
-                      next,
-                      channel,
-                      selectedBox.track_id!,
-                    );
-                    if (!info) return;
-                    info.end = null;
-                    rebuildTrack(
-                      next,
-                      channel,
-                      selectedBox.track_id!,
-                      info,
-                      frames,
-                    );
-                  })
-                }
-              >
-                Continue
-              </button>
+              {track?.end!==null&&track?.end!==undefined&&<button className="button secondary small" aria-label="Continue selected track" onClick={()=>continueTrack(selectedBox.track_id!)}>Continue track</button>}
             </div>
             <p className="field-help">
               Edits create keyframes. Boxes interpolate by timestamp
@@ -280,6 +242,10 @@ editor: Pick<AnnotationEditorController,
             </button>
           </div>
         )}
+        {!!finishedTracks.length&&<div className="finished-tracks"><h4>Finished tracks</h4>{finishedTracks.map(([id,info])=>{
+          const first=Object.values(info.keyframes)[0];
+          return <article key={id}><div><strong>{first?state.classes[first.class_id]:"Object"} · Track #{id}</strong><small>Finished at frame {info.end!+1}</small></div><button className="button secondary small" aria-label={`Continue track ${id}`} onClick={()=>continueTrack(Number(id))}>Continue track</button></article>;
+        })}</div>}
       </div>
     ) : (
       <div className="classifications">
@@ -310,7 +276,7 @@ editor: Pick<AnnotationEditorController,
           ))
         ) : (
           <p className="muted">
-            Assign a list in the data labeling table and create labels inside that list.
+            Add a class above or choose an existing label list.
           </p>
         )}
         {technique === "jsonl" && (
@@ -351,40 +317,5 @@ editor: Pick<AnnotationEditorController,
         )}
       </div>
     )}
-    <div className="review-panel">
-      <p className="field-help">{frameRow.skipped ? "Skipped — excluded from training" : frameRow.explicit_empty ? "Confirmed empty — training negative" : frameRow.boxes.length || frameRow.labels?.length ? "Labeled frame" : "Unlabeled frame"}. Completion is separate from reviewer approval.</p>
-      <label className="check-label"><input type="checkbox" checked={frameRow.skipped === true} onChange={e => updateRow(row => { row.skipped = e.target.checked; if (e.target.checked) { row.reviewed = false; delete row.explicit_empty; } })} />Skip this frame</label>
-      <label
-        className={`review-check ${frameRow.reviewed ? "is-reviewed" : ""}`}
-      >
-        <input
-          type="checkbox"
-          checked={frameRow.reviewed}
-          onChange={(event) =>
-            updateRow((row) => {
-              row.reviewed = event.target.checked;
-              if (event.target.checked) row.skipped = false;
-              if (
-                event.target.checked &&
-                !row.boxes.length &&
-                !(row.labels || []).length
-              )
-                row.explicit_empty = true;
-              else delete row.explicit_empty;
-            })
-          }
-        />
-        <CheckCircle2 size={20} />
-        <div>
-          <strong>Frame complete</strong>
-          <span>
-            {frameRow.reviewed
-              ? "Included in the next task submission"
-              : "Optional progress marker; empty completed frames become training negatives"}
-          </span>
-        </div>
-      </label>
-
-    </div>
   </aside>);
 }
