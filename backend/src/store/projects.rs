@@ -65,8 +65,16 @@ impl Store {
         if project["format_version"] == 1 {
             detail["mcaps"] = json!([{"uuid":project["uuid"],"source_file":project["source_file"],"path":project["mcap"],"sha256":project["sha256"]}]);
         }
+        let published = self.recording_dataset_usages(project);
         if let Some(items) = detail["mcaps"].as_array_mut() {
             for item in items {
+                item["dataset_usage_available"] = json!(published.is_ok());
+                item["dataset_usages"] = published
+                    .as_ref()
+                    .ok()
+                    .and_then(|usages| usages.get(item["uuid"].as_str().unwrap_or("")))
+                    .cloned()
+                    .unwrap_or(json!([]));
                 if let Some(metadata) = self.recording_file_metadata(folder, item) {
                     item.as_object_mut()
                         .unwrap()
@@ -80,6 +88,37 @@ impl Store {
         detail
     }
 
+    fn recording_dataset_usages(
+        &self,
+        project: &Value,
+    ) -> Result<std::collections::HashMap<String, Value>> {
+        let mut usages = std::collections::HashMap::<String, Value>::new();
+        for dataset in project["datasets"]
+            .as_object()
+            .into_iter()
+            .flat_map(|items| items.values())
+            .filter(|item| item["kind"] == "approved-dataset")
+        {
+            for descriptor in dataset["versions"].as_array().into_iter().flatten() {
+                let number = descriptor["number"]
+                    .as_u64()
+                    .context("Invalid published version")?;
+                let version =
+                    self.dataset_version(field(project, "uuid")?, field(dataset, "uuid")?, number)?;
+                for source in version["source_revisions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|source| source["project_uuid"] == project["uuid"])
+                {
+                    let recording = field(source, "recording_id")?.to_owned();
+                    usages.entry(recording).or_insert(json!([])).as_array_mut().unwrap().push(json!({"dataset_id":dataset["uuid"],"name":dataset["name"],"version":number,"revision":source["revision"],"task_id":source["task_id"]}));
+                }
+            }
+        }
+        Ok(usages)
+    }
+
     fn recording_file_metadata(&self, folder: &Path, item: &Value) -> Option<Value> {
         let path = contained_path(folder, item["path"].as_str()?).ok()?;
         let stamp = crate::storage::fingerprint(&path).ok()?;
@@ -89,12 +128,18 @@ impl Store {
         )
         .ok()?;
         if let Ok(saved) = self.cached_json(&cache) {
-            if saved["fingerprint"] == stamp {
+            if saved["fingerprint"] == stamp && saved["metadata_version"] == 2 {
                 return Some(saved["metadata"].clone());
             }
         }
-        let metadata = crate::engine::recording_metadata(&path).ok()?;
-        let _ = write_json(&cache, &json!({"fingerprint":stamp,"metadata":metadata}));
+        let metadata = match crate::engine::recording_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => return Some(json!({"file_size_bytes":stamp["size"]})),
+        };
+        let _ = write_json(
+            &cache,
+            &json!({"metadata_version":2,"fingerprint":stamp,"metadata":metadata}),
+        );
         Some(metadata)
     }
 
@@ -131,7 +176,7 @@ impl Store {
         } else {
             contained_path(original, "annotations.json").ok()?
         };
-        let dependencies = json!({"summary_version":2,"index":crate::storage::fingerprint(&index_path).ok()?,"annotations":crate::storage::fingerprint(&annotations_path).ok(),"sha256":item["sha256"]});
+        let dependencies = json!({"summary_version":3,"index":crate::storage::fingerprint(&index_path).ok()?,"annotations":crate::storage::fingerprint(&annotations_path).ok(),"sha256":item["sha256"]});
         let summary_path = contained_path(
             folder,
             &format!("indexes/{}/summary.json", item["uuid"].as_str()?),
@@ -182,6 +227,17 @@ impl Store {
         .filter(|state| state["sha256"] == item["sha256"]);
         let mut annotated_count = 0;
         let mut reviewed_count = 0;
+        let mut coverage = Map::<String, Value>::new();
+        for (channel, topic) in topics {
+            let required = topic["kind"] == "image"
+                || annotations.as_ref().is_some_and(|state| {
+                    matches!(
+                        state["techniques"][channel].as_str(),
+                        Some("yolo" | "classification" | "csv")
+                    )
+                });
+            coverage.insert(channel.clone(),json!({"frame_count":topic["frames"].as_array().map_or(0,Vec::len),"annotated_count":0,"required":required}));
+        }
         if let Some(channels) = annotations
             .as_ref()
             .and_then(|state| state["annotations"].as_object())
@@ -202,6 +258,20 @@ impl Store {
                         if row["reviewed"] == true {
                             reviewed_count += 1;
                         }
+                        if row["reviewed"] == true
+                            || row["boxes"]
+                                .as_array()
+                                .is_some_and(|items| !items.is_empty())
+                            || row["labels"]
+                                .as_array()
+                                .is_some_and(|items| !items.is_empty())
+                            || (!row["fields"].is_null() && row["fields"] != json!({}))
+                        {
+                            if let Some(topic) = coverage.get_mut(channel) {
+                                topic["annotated_count"] =
+                                    json!(topic["annotated_count"].as_u64().unwrap_or(0) + 1);
+                            }
+                        }
                         if row["boxes"]
                             .as_array()
                             .is_some_and(|items| !items.is_empty())
@@ -220,7 +290,7 @@ impl Store {
         modalities.sort();
         let mut topic_names: Vec<_> = topic_names.into_iter().collect();
         topic_names.sort();
-        let summary = json!({"topic_count":topics.len(), "topic_names":topic_names,"start_time_ns":start.map(|s|s.to_string()),"end_time_ns":end.map(|s|s.to_string()), "duration_seconds":end.zip(start).map_or(0.0, |(end, start)| (end - start) as f64 / 1e9), "modalities":modalities, "frame_count":frame_count, "annotated_count":annotated_count, "reviewed_count":reviewed_count});
+        let summary = json!({"topic_count":topics.len(), "topic_names":topic_names,"start_time_ns":start.map(|s|s.to_string()),"end_time_ns":end.map(|s|s.to_string()), "duration_seconds":end.zip(start).map_or(0.0, |(end, start)| (end - start) as f64 / 1e9), "modalities":modalities, "frame_count":frame_count, "annotated_count":annotated_count, "reviewed_count":reviewed_count,"annotation_topics":coverage});
         let _ = crate::storage::write_changed(
             &summary_path,
             &json!({"dependencies":dependencies,"summary":summary}),
