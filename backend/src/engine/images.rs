@@ -97,7 +97,7 @@ pub(super) fn payload_bytes(value: &Value) -> Result<Vec<u8>> {
 
 pub(super) fn is_camera(record: &Value) -> bool {
     record.get("data").is_some()
-        && ["width", "format", "encoding", "pixel_format"]
+        && ["width", "format", "encoding", "pixel_format", "codec"]
             .iter()
             .any(|key| record.get(*key).is_some())
 }
@@ -113,9 +113,15 @@ pub(super) fn decode_image_bytes(record: &Value, bytes: &[u8]) -> Result<Dynamic
             .map(|image| DynamicImage::ImageRgb8(image.into_rgb8()))
             .context("Invalid PNG/JPEG image");
     }
+    match super::video::compressed_format(record) {
+        Some("h264") => return super::video::CameraDecoder::default().decode(0, record, bytes)?.context("H.264 message contains headers but no video frame"),
+        Some("jpeg") => anyhow::bail!("Invalid JPEG/MJPEG image payload; each MCAP message must contain one complete JPEG image"),
+        Some("png") => anyhow::bail!("Invalid PNG image payload"),
+        _ => {}
+    }
     let format = record["format"].as_str().unwrap_or("").to_ascii_lowercase();
-    ensure!(!matches!(format.as_str(), "h264" | "h265" | "hevc" | "vp9" | "av1"),
-        "Compressed video ({format}) is not supported by the native image decoder; import PNG/JPEG or raw images");
+    ensure!(!matches!(format.as_str(), "h265" | "hevc" | "vp9" | "av1"),
+        "Compressed video ({format}) is not supported by the native image decoder; use H.264, PNG/JPEG, or raw images");
     let encoding = image_encoding(record);
     let layout = RawFormat::parse(&encoding)?;
     let RawFormat {
