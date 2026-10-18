@@ -7,7 +7,7 @@ export type AnnotationEditorProps = {
   channel: string;
   onBack: () => void;
   onNext?: () => Promise<void>;
-  onLabels: () => void;
+  onProject: (value: Project) => Promise<void>;
   onError: (value: string) => void;
   onNotice: (value: string) => void;
   onSaved: (value: AnnotationState) => void;
