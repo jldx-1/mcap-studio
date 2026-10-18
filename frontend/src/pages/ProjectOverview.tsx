@@ -21,10 +21,10 @@ export function ProjectOverview({ project, busy, onOpen }: { project: Project; b
     <>
       <div className="project-hub">
         <button className="panel hub-card" disabled={busy || !can(project,user,"mcap.view")} onClick={() => onOpen("mcaps")}>
-          <Layers3 size={24} /><h2>Project MCAPs</h2><p>Recording{project.mcaps.length === 1 ? "" : "s"}</p>
+          <Layers3 size={24} /><h2>MCAP Library</h2><p>Recording{project.mcaps.length === 1 ? "" : "s"}</p>
           <span>{formatDuration(summaries.reduce((sum, item) => sum + item.duration_seconds, 0))} total duration · {topics} distinct topics</span>
           <span>{modalities.length ? modalities.join(" · ") : "No indexed modalities yet"}</span>
-          <span className="hub-link">View MCAPs <ArrowRight size={16} /></span>
+          <span className="hub-link">Open library <ArrowRight size={16} /></span>
         </button>
         <button className="panel hub-card" disabled={busy || (!can(project,user,"labels.manage")&&!can(project,user,"project.manage"))} onClick={() => onOpen("labels")}>
           <Tag size={24} /><h2>Labels &amp; Translations</h2>
