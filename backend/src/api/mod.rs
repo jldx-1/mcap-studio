@@ -225,6 +225,10 @@ pub fn router(store: Arc<Store>) -> Router {
             put(workflow),
         )
         .route(
+            "/api/projects/{project}/translation-definitions",
+            get(translations::definitions).post(translations::definition_action),
+        )
+        .route(
             "/api/projects/{project}/recordings/{recording}/translations",
             get(translations::choices).post(translations::save),
         )
