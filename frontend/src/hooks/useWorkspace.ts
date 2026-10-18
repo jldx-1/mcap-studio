@@ -164,13 +164,15 @@ export function useWorkspace() {
       await importPendingFiles(value);
     });
   };
-  const chooseRecording = async (uuid: string, sourceProject?: string) => {
+  const chooseRecording = async (uuid: string, sourceProject?: string, onOpened?: (recording: Recording) => void) => {
     if (!project || busy || !(await canLeave())) return;
     await perform("Opening MCAP", async () => {
       const projectId = sourceProject || project.uuid;
       if (projectId !== project.uuid) showProject(await workspaceApi.project(projectId));
-      applyRecording(await workspaceApi.recording(projectId, uuid));
+      const loaded=await workspaceApi.recording(projectId, uuid);
+      applyRecording(loaded);
       setPage("topics");
+      onOpened?.(loaded);
     });
   };
   const startLabeling = async (uuid: string, ids = labelingQueue, sourceProject?: string) => {
