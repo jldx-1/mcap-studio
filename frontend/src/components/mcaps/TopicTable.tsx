@@ -1,3 +1,4 @@
+import { TopicErrors } from "./TopicErrors";
 import { useAuth } from "../../state/AuthContext";
 import { can } from "../../utils/permissions";
 import { Pencil } from "lucide-react";
@@ -100,14 +101,7 @@ export function TopicTable({
                       Channel {id} · {topic.kind} ·{" "}
                       {topic.frame_count.toLocaleString()} messages
                     </span>
-                    {!!topic.errors?.length && (
-                      <span
-                        className="pill amber"
-                        title={topic.errors.join("\n")}
-                      >
-                        Needs attention
-                      </span>
-                    )}
+                    {!!topic.errors?.length && <TopicErrors topic={topic.topic} channel={id} errors={topic.errors}/>}
                   </td>
                   <td>
                     <select
