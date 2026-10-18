@@ -30,7 +30,7 @@ try {
   const imported = await upload.json();
   assert.equal(imported.indexing,"pending");
   const recording = await request(`${base}/recordings/${imported.uuid}`);
-  const topic = recording.topics.find((item) => item.kind === "image" && item.frame_count >= 3);
+  const topic = recording.topics.find((item) => item.kind === "image" && item.frame_count >= 3 && (!process.env.MCAP_PLAYBACK_TOPIC || item.topic === process.env.MCAP_PLAYBACK_TOPIC));
   assert.ok(topic,"Fixture needs at least three image frames");
   const channel = String(topic.channel_id);
   project = await request(`${base}/labels`,{name:"robot"});
@@ -52,7 +52,7 @@ try {
   await page.goto(url);
   await page.getByRole("button",{name:new RegExp(project.name)}).click();
   await page.getByRole("heading",{name:project.name,exact:true,level:1}).waitFor();
-  await page.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"Recordings",exact:true}).click();
+  await page.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"MCAP Library",exact:true}).click();
   await page.getByLabel("Sort MCAPs by import date",{exact:true}).selectOption("oldest");
   const uploadResponse = page.waitForResponse((response) => response.url().includes("/recordings?defer_index=true") && response.request().method() === "POST").catch(() => null);
   const additionalRecording = join(uploadDirectory, "additional-recording.mcap");
@@ -60,7 +60,7 @@ try {
   await page.getByLabel("Load MCAP files",{exact:true}).setInputFiles(additionalRecording);
   const uploadedResponse = await uploadResponse;assert.ok(uploadedResponse?.ok(),"Browser upload should succeed");
   assert.equal((await uploadedResponse.json()).duplicate,true,"Uploading the same MCAP bytes should reuse the recording");
-  await page.getByRole("heading",{name:"Recordings",exact:true,level:1}).waitFor();
+  await page.getByRole("heading",{name:"MCAP Library",exact:true,level:1}).waitFor();
   assert.equal(await page.locator(".preparation-jobs,.recording-family").count(),0,"Recording library has no job panel or version windows");
   await page.getByRole("button",{name:/^Notifications/}).waitFor();
   assert.equal(await page.locator(".recordings-table tbody tr").count(),1,"Original and derived data share one library entry");
@@ -93,14 +93,16 @@ try {
   assert.match(await canvas.locator("image").getAttribute("href"),/^blob:/);
   await new Promise((resolve) => setTimeout(resolve,400));
   assert.equal(await counter.inputValue(),paused,"Pause must cancel pending advancement");
-  await page.getByRole("checkbox",{name:/Frame complete/}).check();
+  assert.equal(await page.getByRole("checkbox",{name:/Frame complete|Skip this frame/}).count(),0);
+  await page.getByLabel("Annotation type",{exact:true}).selectOption("classification");
+  await page.getByRole("checkbox",{name:"robot",exact:true}).check();
   const annotationResponse = page.waitForResponse((response) => response.url().endsWith("/annotations") && response.request().method() === "PATCH");
   await page.getByRole("button",{name:"Save annotations",exact:true}).click();
   const patchResponse = await annotationResponse;
   assert.ok(patchResponse.ok(),await patchResponse.text());
   assert.ok((await patchResponse.json()).metadata);
   await page.getByText("All changes saved",{exact:true}).waitFor();
-  assert.equal((await request(`${base}/recordings/${recording.uuid}`)).annotations.annotations[channel][String(Number(paused)-1)].reviewed,true);
+  assert.deepEqual((await request(`${base}/recordings/${recording.uuid}`)).annotations.annotations[channel][String(Number(paused)-1)].labels,[0]);
   // Native Space activation of a focused Play button must toggle exactly once.
   await page.getByRole("button",{name:"Play frames",exact:true}).press("Space");
   await page.waitForFunction((previous) => Number(document.querySelector('input[aria-label="Frame number"]').value) > previous,Number(paused));
