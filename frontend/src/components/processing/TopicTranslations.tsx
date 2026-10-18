@@ -5,7 +5,7 @@ import type { Perform } from "../../types/workspace";
 
 interface Translation {id:string;name:string;script:string;source_message:string;source_schema_sha256:string;topic?:string;[key:string]:unknown}
 interface TranslationTopic {channel_id:string;topic:string;encoding?:string;source_message:string;source_schema_sha256:string;choices:Translation[]}
-interface Preview {source:unknown;translated:unknown}
+interface Preview {source:unknown;translated:unknown;row?:unknown}
 interface LiveOutput {channel:string;script:string;value:unknown}
 interface PreviewError {channel:string;script:string;message:string}
 
@@ -56,7 +56,7 @@ export function useTopicTranslations({project,recording,busy,perform,enabled,onN
       void api<Preview>(base+"/preview",{
         method:"POST",body:JSON.stringify({channel_id:channel,script}),signal:controller.signal,
       }).then(result=>{
-        if(active){setSource({channel,value:result.source});setSourceError("");setOutput({channel,script,value:result.translated});setPreviewError(null);}
+        if(active){setSource({channel,value:result.source});setSourceError("");setOutput({channel,script,value:result.row??result.translated});setPreviewError(null);}
       }).catch(error=>{
         if(active)setPreviewError({channel,script,message:error instanceof Error?error.message:String(error)});
       });
@@ -105,8 +105,8 @@ export function useTopicTranslations({project,recording,busy,perform,enabled,onN
           <label>Translation script<textarea aria-label="Topic translation script" rows={12} value={script} disabled={busy} onChange={event=>setScript(event.target.value)}/></label>
         </div>
         <div className="translation-preview-pane">
-          <h3>Output</h3>
-          <p className="field-help">Updates automatically as you edit</p>
+          <h3>CSV output</h3>
+          <p className="field-help">Flattened CSV columns update automatically as you edit</p>
           {currentPreviewError?<p className="inline-error" role="alert">{currentPreviewError}</p>:currentOutput?<pre>{JSON.stringify(currentOutput.value,null,2)}</pre>:<p className="field-help" role="status">{script.trim()?"Updating preview…":"Enter a translation script to see output."}</p>}
         </div>
       </div>
