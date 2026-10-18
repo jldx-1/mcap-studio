@@ -14,7 +14,6 @@ export function useAnnotationEditor({
   recording,
   channel,
   onBack,
-  onLabels,
   onError,
   onNotice,
   onSaved,
@@ -98,14 +97,7 @@ export function useAnnotationEditor({
   const track = selectedBox?.track_id
     ? trackInfo(state, channel, selectedBox.track_id)
     : undefined;
-  const reviewedCount = useMemo(
-    () =>
-      Object.values(state.annotations[channel] || {}).filter(
-        (value) => value.reviewed,
-      ).length,
-    [state, channel],
-  );
-  const assignedList = recording.annotations.topic_label_lists?.[channel] || "";
+  const assignedList = state.topic_label_lists?.[channel] || "";
   const assignedLabelList = project.label_lists.find((list) => list.uuid === assignedList);
   const allowedIds = assignedLabelList?.label_ids || [];
   const availableClasses = state.classes
@@ -344,7 +336,7 @@ export function useAnnotationEditor({
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable || target.closest('[role="dialog"]') || document.querySelector('[role="dialog"]')) return;
       if ((event.ctrlKey || event.metaKey) && event.key === "s") {
         event.preventDefault();
         void save();
@@ -353,34 +345,27 @@ export function useAnnotationEditor({
         undo();
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        navigateFrame(frameNumber + frameStep);
+        const next=event.shiftKey?keyframeNumbers.find(number=>number>frameNumber):frameNumber+frameStep;
+        if(next!==undefined)navigateFrame(next);
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
-        navigateFrame(frameNumber - frameStep);
+        const previous=event.shiftKey?[...keyframeNumbers].reverse().find(number=>number<frameNumber):frameNumber-frameStep;
+        if(previous!==undefined)navigateFrame(previous);
       } else if (event.key === " ") {
         if (target.closest("button, a")) return;
         event.preventDefault();
         if (frameNumber >= frames.length - 1) setFrameNumber(0);
         setPlaying((value) => !value);
-      } else if (event.key.toLowerCase() === "b") setTool("draw");
+      } else if (event.key.toLowerCase() === "b" && boxTool && !readOnly) setTool("draw");
       else if (event.key.toLowerCase() === "v") setTool("select");
       else if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         deleteBox();
-      } else if (event.key.toLowerCase() === "r") {
-        event.preventDefault();
-        commit((next) => {
-          const row = ((next.annotations[channel] ||= {})[frameNumber] ||=
-            freshRow());
-          row.reviewed = !row.reviewed;
-          if (row.reviewed) { row.skipped = false; if (!row.boxes?.length && !row.labels?.length) row.explicit_empty = true; }
-          else delete row.explicit_empty;
-        });
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [save, undo, frames.length, deleteBox, commit, channel, frameNumber, frameStep]);
+  }, [save, undo, frames.length, deleteBox, commit, channel, frameNumber, frameStep, keyframeNumbers, boxTool, readOnly]);
   const { start, move, end, editSelected } = createAnnotationTools({
     svg,
     drag,
@@ -446,11 +431,11 @@ export function useAnnotationEditor({
     frameUrl,
     displayedFrameUrl,
     togglePlayback,
+    pausePlayback: () => setPlaying(false),
     width,
     height,
     selectedBox,
     track,
-    reviewedCount,
     assignedLabelList,
     availableClasses,
     commit,
@@ -466,7 +451,6 @@ export function useAnnotationEditor({
     editSelected,
     channel,
     onBack,
-    onLabels,
     onError,
     onNotice
   };
