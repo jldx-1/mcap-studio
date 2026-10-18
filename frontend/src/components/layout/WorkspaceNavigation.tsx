@@ -33,7 +33,7 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
         <nav aria-label="Project navigation">
           {[
             { value: "project", label: "Overview", icon: FolderOpen },
-            { value: "mcaps", label: "Recordings", icon: Layers3,permission:"mcap.view" },
+            { value: "mcaps", label: "MCAP Library", icon: Layers3,permission:"mcap.view" },
             { value: "labels", label: "Labels & Translations", icon: Tag,permission:"labels.manage" },
             { value:"reviews",label:"Reviews",icon:ClipboardCheck,permission:"review.view" },
             { value: "datasets", label: "Datasets", icon: Database },
@@ -46,7 +46,7 @@ export function WorkspaceSidebar({ workspace, uploadButton }: { workspace: Pick<
           ))}
         </nav>
         <div className="sidebar-project-actions">
-          {uploadButton}
+          {page!=="mcaps"&&uploadButton}
           {page!=="mcaps"&&can(project,user,"datasets.generate") && <button className="button secondary" disabled={!!busy} onClick={() => openDialog("dataset")}><Database size={17} /> Create dataset</button>}
           <button className="text-button" disabled={!!busy} onClick={() => void go("projects")}><ArrowLeft size={15} /> All projects</button>
         </div>
