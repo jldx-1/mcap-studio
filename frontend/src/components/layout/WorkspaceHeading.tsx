@@ -35,7 +35,7 @@ workspace: Pick<WorkspaceController,
     openDialog
   } = workspace;
 
-  if(["reviews","review","members","administration","account","permissions"].includes(page)) return null;
+  if(["labeling","mcaps","reviews","review","members","administration","account","permissions"].includes(page)) return null;
   const selectedTopic = recording?.topics.find(
     (topic) => String(topic.channel_id) === channel,
   );
@@ -73,6 +73,15 @@ workspace: Pick<WorkspaceController,
                   : "Select, translate, and synchronize channels into a new recording.";
   return (<div className="page-heading">
     <div>
+      {page === "topics" && (
+        <button
+          className="button secondary recording-back-button"
+          disabled={!!busy}
+          onClick={() => void go("mcaps")}
+        >
+          <ArrowLeft size={17} /> Back to MCAPs
+        </button>
+      )}
       <div className="eyebrow">
         {!project
           ? "PROJECTS"
@@ -125,7 +134,7 @@ workspace: Pick<WorkspaceController,
           {uploadButton}
         </>
       )}
-      {(page === "mcaps" || page === "labels" || page === "topics" ||
+      {(page === "mcaps" || page === "labels" ||
         page === "pipeline" ||
         page === "datasets") && (
           <button
@@ -136,10 +145,10 @@ workspace: Pick<WorkspaceController,
                 setDatasetStart(datasetStart === "add" ? "view" : "load");
                 return;
               }
-              void go(page === "topics" ? "mcaps" : "project");
+              void go("project");
             }}
           >
-            <ArrowLeft size={17} /> {page === "topics" ? "Back to MCAPs" : page === "datasets" && datasetStart !== "load" ? datasetStart === "add" ? "Back to dataset" : "Back to datasets" : "Back to project"}
+            <ArrowLeft size={17} /> {page === "datasets" && datasetStart !== "load" ? datasetStart === "add" ? "Back to dataset" : "Back to datasets" : "Back to project"}
           </button>
         )}
       {page === "pipeline" && (
