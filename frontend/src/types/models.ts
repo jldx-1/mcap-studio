@@ -19,9 +19,15 @@ export interface RecordingMetrics {
   frame_count: number;
   annotated_count: number;
   reviewed_count: number;
+  annotation_topics?: Record<string,{frame_count:number;annotated_count:number;required:boolean}>;
 }
 
+export interface RecordingTopicInfo { channel_id:string;topic:string;encoding:string;schema_name:string;message_count:number;modality:string }
+export interface RecordingDatasetUsage {dataset_id:string;name:string;version:number;revision:number;task_id:string}
 export interface RecordingSummary {
+  topic_details?: RecordingTopicInfo[];
+  dataset_usages?: RecordingDatasetUsage[];
+  dataset_usage_available?: boolean;
   file_size_bytes?: number;
   topic_count?: number;
   duration_seconds?: number;
