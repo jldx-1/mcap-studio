@@ -264,3 +264,5 @@ impl Store {
         Ok(lock)
     }
 }
+
+mod translation_definitions;
