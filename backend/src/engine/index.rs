@@ -13,24 +13,38 @@ use std::{
 };
 
 use super::{
-    images::{decode_image_bytes, payload_bytes},
+    images::payload_bytes,
     is_camera,
     reader::stream_messages_with_hash,
+    video::{compressed_format, CameraDecoder},
     Decoder,
 };
 
-const IMAGE_DECODER_VERSION: u32 = 2;
+const IMAGE_DECODER_VERSION: u32 = 3;
 
-/// Retry old raw-format failures once when the decoder gains format support.
+/// Retry cached camera-format failures once when decoder support improves.
 pub fn image_cache_needs_upgrade(index: &Value) -> bool {
     index["image_decoder_version"] != IMAGE_DECODER_VERSION
         && index["topics"].as_object().is_some_and(|topics| {
             topics.values().any(|topic| {
                 topic["errors"].as_array().is_some_and(|errors| {
                     errors.iter().any(|error| {
-                        error
-                            .as_str()
-                            .is_some_and(|text| text.contains("Unsupported raw image encoding"))
+                        error.as_str().is_some_and(|text| {
+                            text.contains("Unsupported raw image encoding")
+                                || text
+                                    .to_ascii_lowercase()
+                                    .contains("compressed video (h264)")
+                                || text
+                                    .split_once("Unsupported message encoding ")
+                                    .is_some_and(|(_, suffix)| {
+                                        let encoding = suffix
+                                            .split_whitespace()
+                                            .next()
+                                            .unwrap_or("")
+                                            .trim_end_matches(';');
+                                        compressed_format(&json!({"format":encoding})).is_some()
+                                    })
+                        })
                     })
                 })
             })
@@ -53,6 +67,7 @@ fn build_index_inner(recording: &Path, cache_dir: &Path, sha256: Option<&str>) -
         .prefix(".frames-")
         .tempdir_in(cache_dir)?;
     let mut decoder = Decoder::default();
+    let mut cameras = CameraDecoder::default();
     let mut topics = Map::new();
     let mut records: HashMap<u16, (BufWriter<File>, u64)> = HashMap::new();
     let (declared, calculated) = stream_messages_with_hash(
@@ -78,7 +93,19 @@ fn build_index_inner(recording: &Path, cache_dir: &Path, sha256: Option<&str>) -
                     } else {
                         payload_bytes(&record["data"])?
                     };
-                    let image = decode_image_bytes(&record, &bytes)?;
+                    topic["kind"] = json!("image");
+                    topic["image_encoding"] = compressed_format(&record)
+                        .map(|format| json!(format))
+                        .unwrap_or_else(|| {
+                            record
+                                .get("pixel_format")
+                                .or(record.get("encoding"))
+                                .cloned()
+                                .unwrap_or(Value::Null)
+                        });
+                    let Some(image) = cameras.decode(channel.id, &record, &bytes)? else {
+                        return Ok(());
+                    };
                     let relative = format!(
                         "channel_{}/{:08}.png",
                         channel.id,
@@ -104,12 +131,6 @@ fn build_index_inner(recording: &Path, cache_dir: &Path, sha256: Option<&str>) -
                         &preview,
                         channel.topic.to_ascii_lowercase().contains("depth"),
                     )?;
-                    topic["image_encoding"] = record
-                        .get("pixel_format")
-                        .or(record.get("encoding"))
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                    topic["kind"] = json!("image");
                     topic["frames"].as_array_mut().unwrap().push(json!({"time_ns": message.log_time, "image": relative, "width": image.width(), "height": image.height()}));
                 } else {
                     if let std::collections::hash_map::Entry::Vacant(entry) =
