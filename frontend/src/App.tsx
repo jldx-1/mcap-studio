@@ -56,8 +56,7 @@ function Workspace() {
     go,
     updateProject,
     upload,
-    onSaved,
-    openDialog
+    onSaved
   } = workspace;
   const dropEnabled = !busy && connected === true && (!project || can(project, auth.user, "project.manage"));
   const draggingFiles = useFileDrop(dropEnabled, upload);
@@ -179,7 +178,7 @@ function Workspace() {
               registerNavigationGuard={registerNavigationGuard}
               onBack={() => void go("topics")}
               onNext={() => workspace.nextLabeling()}
-              onLabels={() => openDialog("labels")}
+              onProject={updateProject}
             />
           )}
           {project && recording && workflow && page === "pipeline" && (
