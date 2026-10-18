@@ -53,3 +53,28 @@ pub(super) async fn apply(
         .await?,
     ))
 }
+
+pub(super) async fn definitions(
+    State(store): State<Arc<Store>>,
+    Path(project): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(
+        blocking(store, move |s| s.translation_definitions(&project)).await?,
+    ))
+}
+pub(super) async fn definition_action(
+    State(store): State<Arc<Store>>,
+    Path(project): Path<String>,
+    Extension(actor): Extension<crate::accounts::Principal>,
+    Json(request): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(
+        blocking(store, move |s| match request["action"].as_str() {
+            Some("preview") => s.preview_definition_translation(&project, &request),
+            Some("save") => s.save_definition_translation(&project, &request, &actor),
+            Some("upload") => s.upload_translation_definitions(&project, &request, &actor),
+            _ => anyhow::bail!("Choose upload, preview, or save"),
+        })
+        .await?,
+    ))
+}
