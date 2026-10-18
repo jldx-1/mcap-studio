@@ -29,6 +29,8 @@ fn sensor_only_recordings_have_metrics_without_previews() {
         writer.finish().unwrap();
         let metrics = recording_metadata(&path).unwrap();
         assert_eq!(metrics["topic_count"], 1);
+        assert_eq!(metrics["topic_details"][0]["modality"], "Motion");
+        assert_eq!(metrics["topic_details"][0]["message_count"], 2);
         assert_eq!(metrics["duration_seconds"], 2.5);
         assert_eq!(
             metrics["file_size_bytes"],
