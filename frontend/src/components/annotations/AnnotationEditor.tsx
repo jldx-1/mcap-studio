@@ -15,7 +15,8 @@ import type { AnnotationEditorProps } from "../../types/editor";
 import { useReviewTasks } from "../../hooks/useReviewTasks";
 import { useAuth } from "../../state/AuthContext";
 import { can } from "../../utils/permissions";
-import { SubmissionPanel } from "../reviews/SubmissionPanel";
+import { EditorReviewControls } from "../reviews/EditorReviewControls";
+import { EditorClasses } from "./EditorClasses";
 import Dialog from "../shared/Dialog";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationInspector } from "./AnnotationInspector";
@@ -45,11 +46,10 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
     save,
     resolveLeave,
     deleteBox,
-    onBack,
-    onLabels
+    onBack
   } = editor;
   return (
-    <section className="panel editor-panel">
+    <section className="panel editor-panel focused-editor">
       <div className="editor-header">
         <div className="topic-picker">
           <button
@@ -57,17 +57,9 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
             disabled={saving}
             onClick={onBack}
           >
-            <ArrowLeft size={16} /> Back To Table
+            <ArrowLeft size={16} /> Back to MCAP
           </button>
           <strong>{topic?.topic}</strong>
-          {props.onNext && <button className="button secondary small" disabled={saving} onClick={() => void (async () => { if (editor.readOnly || await save()) await props.onNext?.(); })()}>Save and next topic / recording</button>}
-          {can(props.project,user,"labels.manage") && <button
-            className="button secondary small"
-            disabled={saving}
-            onClick={onLabels}
-          >
-            Label lists…
-          </button>}
         </div>
         {!editor.readOnly && <div className="editor-save">
           <span className={`save-state ${dirty ? "unsaved" : ""}`}>
@@ -75,7 +67,7 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
             {saveError ? "Save failed — retry to continue" : saving ? "Saving…" : dirty ? "Autosave pending" : "All changes saved"}
           </span>
           <button
-            className="button primary small"
+            className="button secondary small"
             disabled={saving || !frames.length}
             onClick={() => void save()}
           >
@@ -87,6 +79,7 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
             Save annotations
           </button>
         </div>}
+        {taskAccess && <EditorReviewControls project={props.project} recording={{...props.recording,annotations:editor.state}} channel={props.channel} controller={reviews} save={save} readOnly={editor.readOnly} onOpen={editor.pausePlayback} onJump={(channel,frame)=>{if(channel===props.channel)editor.navigateFrame(frame);}}/>}
       </div>
       {editor.readOnly && <p className="field-help collection-body">{"Viewing saved annotations."}</p>}
       {topic?.errors?.length ? (
@@ -170,8 +163,9 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
                 <div className="shortcut-bar">
                   <span>
                     <kbd>←</kbd>
-                    <kbd>→</kbd> Seek
+                    <kbd>→</kbd> Step
                   </span>
+                  <span><kbd>Shift ← / →</kbd> Keyframes</span>
                   <span>
                     <kbd>Space</kbd> Play
                   </span>
@@ -182,9 +176,6 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
                     <kbd>V</kbd> Select
                   </span>
                   <span>
-                    <kbd>R</kbd> Mark complete
-                  </span>
-                  <span>
                     <kbd>Ctrl S</kbd> Save
                   </span>
                 </div>
@@ -192,11 +183,10 @@ export default function AnnotationEditor(props: AnnotationEditorProps) {
               <AnnotationCanvas editor={editor} />
               <AnnotationTimeline editor={editor} />
             </div>
-            <fieldset className="editor-inspector" disabled={editor.readOnly}><AnnotationInspector editor={editor} /></fieldset>
+            <fieldset className="editor-inspector" disabled={editor.readOnly}><AnnotationInspector editor={editor} classes={<EditorClasses editor={editor} project={props.project} onProject={props.onProject}/>}/>{props.onNext&&<div className="editor-next"><button className="button secondary small" disabled={saving} onClick={()=>void(async()=>{if(editor.readOnly||await save())await props.onNext?.();})()}>Save and next topic / recording</button></div>}</fieldset>
           </div>
         </>
       )}
-      {taskAccess && <SubmissionPanel project={props.project} recording={{...props.recording,annotations:editor.state}} channel={props.channel} controller={reviews} save={save} onError={props.onError} onJump={(channel,frame) => { if(channel === props.channel) editor.navigateFrame(frame); }} />}
       {leavePrompt && (
         <Dialog
           title="Save annotations before leaving?"
