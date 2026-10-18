@@ -35,19 +35,39 @@ impl Decoder {
         match channel.message_encoding.as_str() {
             "json" | "application/json" => Ok((serde_json::from_slice(&message.data)?, None)),
             "protobuf" => {
-                let schema = channel.schema.as_ref().context("Protobuf channel has no schema")?;
-                ensure!(schema.encoding == "protobuf", "Unsupported Protobuf schema encoding {}", schema.encoding);
-                if let std::collections::hash_map::Entry::Vacant(entry) = self.descriptors.entry(schema.id) {
-                    let pool = DescriptorPool::decode(schema.data.as_ref()).context("Invalid embedded Protobuf descriptor set")?;
-                    let descriptor = pool.get_message_by_name(schema.name.trim_start_matches('.'))
+                let schema = channel
+                    .schema
+                    .as_ref()
+                    .context("Protobuf channel has no schema")?;
+                ensure!(
+                    schema.encoding == "protobuf",
+                    "Unsupported Protobuf schema encoding {}",
+                    schema.encoding
+                );
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.descriptors.entry(schema.id)
+                {
+                    let pool = DescriptorPool::decode(schema.data.as_ref())
+                        .context("Invalid embedded Protobuf descriptor set")?;
+                    let descriptor = pool
+                        .get_message_by_name(schema.name.trim_start_matches('.'))
                         .with_context(|| format!("Schema does not define {}", schema.name))?;
                     entry.insert(descriptor);
                 }
-                let message = DynamicMessage::decode(self.descriptors[&schema.id].clone(), message.data.as_ref())?;
-                if separate_image && ["width", "format", "encoding", "pixel_format"].iter().any(|name| message.descriptor().get_field_by_name(name).is_some()) {
+                let message = DynamicMessage::decode(
+                    self.descriptors[&schema.id].clone(),
+                    message.data.as_ref(),
+                )?;
+                if separate_image
+                    && ["width", "format", "encoding", "pixel_format", "codec"]
+                        .iter()
+                        .any(|name| message.descriptor().get_field_by_name(name).is_some())
+                {
                     if let Some(field) = message.descriptor().get_field_by_name("data") {
                         if field.containing_oneof().is_none() || message.has_field(&field) {
-                            if let prost_reflect::Value::Bytes(bytes) = message.get_field(&field).as_ref() {
+                            if let prost_reflect::Value::Bytes(bytes) =
+                                message.get_field(&field).as_ref()
+                            {
                                 let mut record = message_json_skipping(&message, 0, Some("data"))?;
                                 record["data"] = Value::Null;
                                 if super::is_camera(&record) {
@@ -59,7 +79,17 @@ impl Decoder {
                 }
                 Ok((message_json(&message, 0)?, None))
             }
-            encoding => bail!("Unsupported message encoding {encoding}; native decoding supports JSON and Protobuf"),
+            encoding => {
+                let mut record = json!({"format":encoding,"data":null});
+                if super::video::compressed_format(&record).is_some() {
+                    if separate_image {
+                        return Ok((record, Some(message.data.to_vec())));
+                    }
+                    record["data"] = json!({"$bytes_base64":STANDARD.encode(&message.data)});
+                    return Ok((record, None));
+                }
+                bail!("Unsupported message encoding {encoding}; native decoding supports JSON, Protobuf, and compressed H.264/JPEG/PNG camera packets")
+            }
         }
     }
 }
