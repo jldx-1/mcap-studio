@@ -55,15 +55,17 @@ try {
   const alicePage = await signIn(annotator,"alice");
   assert.equal(await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"Reviews",exact:true}).count(),1);
   assert.equal(await alicePage.getByRole("button",{name:"Load MCAPs",exact:true}).count(),0);
-  await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"Recordings",exact:true}).click();
+  await alicePage.getByRole("navigation",{name:"Project navigation"}).getByRole("button",{name:"MCAP Library",exact:true}).click();
   await alicePage.getByRole("button",{name:`Open recording ${basename(fixture)}`,exact:true}).click();
-  await alicePage.getByRole("button",{name:/Create Labels for/}).click();
+  await alicePage.getByRole("button",{name:`Create Labels for ${recording.topics.find(topic=>String(topic.channel_id)===channel).topic}`,exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Not started",{exact:true}).waitFor();
   await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();
   await alicePage.locator(".workflow-current-status").getByText("Annotating",{exact:true}).waitFor();
-  await alicePage.getByLabel("Frame number",{exact:true}).fill("2");await alicePage.getByRole("checkbox",{name:/Frame complete/}).check();
+  await alicePage.getByLabel("Frame number",{exact:true}).fill("2");await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();
+  assert.equal(await alicePage.getByRole("checkbox",{name:/Frame complete|Skip this frame/}).count(),0);
+  await alicePage.getByRole("button",{name:"Submit for Review",exact:true}).click();
   await alicePage.getByLabel("Task last frame",{exact:true}).fill("3");
-  await alicePage.getByRole("button",{name:"Save and submit revision",exact:true}).click();
+  await alicePage.getByRole("button",{name:"Confirm submission",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Ready for review",{exact:true}).waitFor();
   assert.equal(await alicePage.getByRole("button",{name:"Save annotations",exact:true}).count(),1);
   let task = (await call(annotator,`${base}/tasks`))[0];assert.equal(task.annotated_count,2);
@@ -84,11 +86,11 @@ try {
   const memberships=await call(admin,`${base}/members`);
   await call(admin,`${base}/members`,{members:[...memberships,...reviewers.map((account,index)=>({user_id:account.id,denied_permissions:index===17?["review.view"]:[]})),{user_id:disabled.id}]},"put");
 
-  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").waitFor();
+  await nav(adminPage,"MCAP Library").click();await statusLink(adminPage,"In review").waitFor();
   assert.equal(await adminPage.locator(".mcap-review-bar,.working-copy-assignment").count(),0,"MCAP browsing has no workflow or assignments");
   assert.equal(await adminPage.getByRole("button",{name:"Assign to me",exact:true}).count(),0);
   await adminPage.screenshot({path:"/tmp/mcap-lightweight-status.png",fullPage:true});
-  await statusLink(adminPage,"Ready for review").click();
+  await statusLink(adminPage,"In review").click();
   await adminPage.getByRole("heading",{name:basename(fixture),level:1,exact:true}).waitFor();
   assert.equal(await adminPage.locator(".review-queue-table").count(),0,"Review detail is separate from its queue");
   const selfSnapshot=task.latest_revision.snapshot;
@@ -161,7 +163,7 @@ try {
   await bobPage.getByLabel("Review frame number",{exact:true}).fill("2");
   await bobPage.getByRole("button",{name:"Reference current frame",exact:true}).click();
   assert.equal(await bobPage.getByLabel("Frame ID",{exact:true}).inputValue(),"2");
-  await bobPage.getByLabel("Review feedback",{exact:true}).fill("Please label frame 2 rather than treating it as empty.");
+  await bobPage.getByLabel("Review feedback",{exact:true}).fill("Please remove the incorrect label from frame 2.");
   await bobPage.getByRole("button",{name:"Add another feedback item",exact:true}).click();
   await bobPage.getByLabel("Reference",{exact:true}).selectOption("timestamp");
   await bobPage.getByLabel("Timestamp",{exact:true}).fill("0:00.000");
@@ -183,13 +185,16 @@ try {
   assert.equal(await bobPage.locator(".review-queue-table tbody tr td").nth(5).textContent(),"3");
   await bobPage.locator(".review-queue-table").getByRole("button",{name:"Open review",exact:true}).click();
 
-  await alicePage.getByRole("button",{name:"Refresh status",exact:true}).click();
+  await alicePage.getByRole("button",{name:"History",exact:true}).click();
+  await alicePage.getByRole("dialog",{name:"Annotation history",exact:true}).getByText("Revision 1",{exact:true}).first().waitFor();
+  await alicePage.getByRole("button",{name:"Close history",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Feedback received",{exact:true}).waitFor();
   await alicePage.getByRole("button",{name:/^Notifications/}).click();
   await alicePage.getByRole("region",{name:"Notifications",exact:true}).getByRole("button",{name:"Open feedback",exact:true}).waitFor();
   await alicePage.keyboard.press("Escape");
-  await alicePage.getByLabel("Frame number",{exact:true}).fill("2");await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();
-  await alicePage.getByRole("button",{name:"Save and submit revision 2",exact:true}).click();
+  await alicePage.getByLabel("Frame number",{exact:true}).fill("2");await alicePage.getByRole("checkbox",{name:"robot",exact:true}).uncheck();
+  await alicePage.getByRole("button",{name:"Submit for Review",exact:true}).click();
+  await alicePage.getByRole("button",{name:"Confirm submission",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Ready for review",{exact:true}).waitFor();
   const ready2=(await call(admin,`${base}/tasks`)).find((value)=>value.id===task.id);
   await call(admin,`${base}/tasks/${task.id}/actions`,{action:"assign",reviewer_id:"",revision_number:2,expected_revision_version:ready2.latest_revision.version});
@@ -209,7 +214,7 @@ try {
   assert.equal((await stat(annotationPath)).mtimeMs,annotationBefore);assert.equal((await stat(rawPath)).mtimeMs,rawBefore);
   const revisions=await call(reviewer,`${base}/tasks/${task.id}/revisions`);
   assert.equal(revisions[1].comments.length,3);assert.equal(revisions[0].comments.length,0);
-  const previous=await call(reviewer,`${base}/tasks/${task.id}/revisions/1/recording`);assert.deepEqual(previous.annotations.annotations[channel]["1"].labels,[]);
+  const previous=await call(reviewer,`${base}/tasks/${task.id}/revisions/1/recording`);assert.deepEqual(previous.annotations.annotations[channel]["1"].labels,[0]);
   await bobPage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await bobPage.getByRole("button",{name:"Open revision 1",exact:true}).click();
   await bobPage.locator('.review-player[data-revision="1"]').waitFor();
@@ -221,7 +226,8 @@ try {
   await bobPage.getByRole("button",{name:"Back to reviews",exact:true}).click();
   await bobPage.getByLabel("Review queue filter",{exact:true}).selectOption("approved");
   await bobPage.locator(".review-queue-table tbody tr").waitFor();assert.equal(await bobPage.locator(".review-queue-table tbody tr").count(),1);
-  await nav(bobPage,"Recordings").click();await statusLink(bobPage,"Approved").waitFor();
+  // The separate sensor submission is still awaiting review.
+  await nav(bobPage,"MCAP Library").click();await statusLink(bobPage,"In review").waitFor();
   assert.equal(await bobPage.locator(".mcap-review-bar,.working-copy-assignment").count(),0);
 
   await nav(adminPage,"Datasets").click();await adminPage.getByRole("button",{name:"Choose recordings",exact:true}).click();
@@ -235,16 +241,17 @@ try {
   await adminPage.getByRole("button",{name:"Build CSV",exact:true}).click();await adminPage.getByText(/Version 1 CSV ready:/).waitFor();
   const dataset=(await call(admin,base)).datasets.find((value)=>value.name==="Robot training"),version1=await call(admin,`${base}/datasets/${dataset.uuid}/versions/1`);
   assert.equal(version1.source_revisions[0].revision,2);
-  await alicePage.getByRole("checkbox",{name:"robot",exact:true}).uncheck();await alicePage.getByRole("button",{name:"Save and submit revision 3",exact:true}).click();
+  await alicePage.getByRole("checkbox",{name:"robot",exact:true}).check();await alicePage.getByRole("button",{name:"Submit for Review",exact:true}).click();await alicePage.getByRole("button",{name:"Confirm submission",exact:true}).click();
   await alicePage.locator(".workflow-current-status").getByText("Ready for review",{exact:true}).waitFor();
   assert.deepEqual(await call(admin,`${base}/datasets/${dataset.uuid}/versions/1`),version1);
-  await nav(alicePage,"Recordings").click();await statusLink(alicePage,"Ready for review").click();
+  await alicePage.getByText("All changes saved",{exact:true}).waitFor();
+  await nav(alicePage,"MCAP Library").click();await statusLink(alicePage,"In review").click();
   await alicePage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await alicePage.getByRole("button",{name:"Open revision 1",exact:true}).click();
   await alicePage.locator('.review-player[data-revision="1"]').waitFor();
   assert.equal(await alicePage.getByRole("button",{name:"Approve revision",exact:true}).count(),0);
 
-  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").click();
+  await nav(adminPage,"MCAP Library").click();await statusLink(adminPage,"In review").click();
   await adminPage.getByRole("button",{name:"Show revision history",exact:true}).click();
   await adminPage.getByText("Working-copy assignment",{exact:true}).click();
   await workingCopy.getByRole("button",{name:"Change annotator",exact:true}).click();
@@ -256,7 +263,7 @@ try {
   await adminPage.evaluate(()=>window.dispatchEvent(new Event("focus")));
   await adminPage.getByRole("button",{name:"Account menu for Jean-Luc DeRieux",exact:true}).waitFor();
   assert.equal((await call(admin,"/accounts/settings")).independent_reviewer,true);
-  await nav(adminPage,"Recordings").click();await statusLink(adminPage,"Ready for review").click();
+  await nav(adminPage,"MCAP Library").click();await statusLink(adminPage,"In review").click();
   assert.equal(await adminPage.getByText(/turn off.*reviewer/i).count(),0);
   assert.equal(await adminPage.getByText("Working-copy assignment",{exact:true}).isVisible(),false,"Assignment management is tucked into History");
   await chooseSelf(adminPage,"Jean Luc Derieux","Jean-Luc DeRieux");
