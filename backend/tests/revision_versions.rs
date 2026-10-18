@@ -232,6 +232,20 @@ fn dataset_versions_keep_their_approved_inputs_when_new_revisions_are_approved()
     let next=lab.store.create_dataset_version(&lab.project,Some(dataset),&lab.admin,&json!({"modalities":["rgb","structured"],"sources":[{"task_id":created["id"],"revision":2}]})).unwrap();
     assert_eq!(next["version"]["number"], 2);
     assert_eq!(next["version"]["sample_count"], 2);
+    let inventory = lab.store.project(&lab.project).unwrap();
+    let item = inventory["mcaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["uuid"] == lab.recording)
+        .unwrap();
+    assert_eq!(item["dataset_usage_available"], true);
+    let usages = item["dataset_usages"].as_array().unwrap();
+    assert_eq!(usages.len(), 2);
+    assert_eq!(usages[0]["version"], 1);
+    assert_eq!(usages[1]["version"], 2);
+    assert_eq!(item["summary"]["annotation_topics"]["1"]["required"], true);
+
     assert_eq!(
         lab.store.approved_data(&lab.project).unwrap()["sources"]
             .as_array()
