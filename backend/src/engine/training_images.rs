@@ -17,6 +17,14 @@ pub(super) fn preserve_native_bytes(
     preview: &Path,
     depth: bool,
 ) -> Result<bool> {
+    // Video/JPEG frames export their decoded RGB preview. Their compressed
+    // bytes are not raw high precision/depth samples, even on a depth topic.
+    if super::video::compressed_format(record)
+        .is_some_and(|format| matches!(format, "h264" | "jpeg"))
+        || data.starts_with(b"\xff\xd8")
+    {
+        return Ok(false);
+    }
     let encoding = image_encoding(record);
     let png16 = data.starts_with(b"\x89PNG") && data.get(24) == Some(&16);
     if !depth && !png16 && !RawFormat::parse(&encoding).is_ok_and(|format| format.sample_bytes > 1)
@@ -64,6 +72,12 @@ pub fn ensure_native_training_images(
     let missing: Vec<_> = channels
         .iter()
         .filter(|ch| {
+            if matches!(
+                index["topics"][*ch]["image_encoding"].as_str(),
+                Some("h264" | "jpeg")
+            ) {
+                return false;
+            }
             index["topics"][*ch]["frames"]
                 .as_array()
                 .into_iter()
