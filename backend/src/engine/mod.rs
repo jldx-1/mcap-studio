@@ -12,6 +12,7 @@ mod training_images;
 mod translation;
 mod translation_files;
 mod translation_stream;
+mod video;
 pub use training_images::{ensure_native_training_images, write_training_tensor};
 pub use translation_files::{translation_channels, translation_file_script, translation_sample};
 
@@ -67,3 +68,7 @@ mod tests;
 
 mod recording_metadata;
 pub use recording_metadata::recording_metadata;
+
+pub(crate) fn protobuf_json(message: &prost_reflect::DynamicMessage) -> Result<Value> {
+    decoder::message_json(message, 0)
+}
