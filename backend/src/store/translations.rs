@@ -156,7 +156,11 @@ impl Store {
             "Translation script is too large"
         );
         let translated = crate::engine::translate_record(&sample, script)?;
-        Ok(json!({"source":preview_value(&sample),"translated":preview_value(&translated)}))
+        let mut columns = serde_json::Map::new();
+        super::structured::flatten_message(&translated, "", &mut columns);
+        Ok(
+            json!({"source":preview_value(&sample),"translated":preview_value(&translated),"columns":columns.keys().collect::<Vec<_>>(),"row":preview_value(&json!(columns))}),
+        )
     }
 
     pub fn save_topic_translation(
