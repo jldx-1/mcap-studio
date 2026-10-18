@@ -220,7 +220,7 @@ fn authorize_route(
     let read = matches!(*method, Method::GET | Method::HEAD);
     let permission = match parts.get(3).copied() {
         None => "project.view",
-        Some("members" | "access-options") => "project.manage",
+        Some("members" | "access-options" | "translation-definitions") => "project.manage",
         Some("directory") => "project.view",
         Some("tasks") => {
             if read
